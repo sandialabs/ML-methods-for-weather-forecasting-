@@ -1,0 +1,310 @@
+---
+title: "RMSEs from Time Series CV on Training Data"
+subtitle: "AGU manuscript"
+author: Katherine Goode
+date: today
+format: 
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 3
+execute:
+  fig-dpi: 300
+---
+
+# Set Up
+
+Load packages:
+
+```{r message = FALSE}
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(stringr)
+library(tidyr)
+library(wesanderson)
+```
+
+Specify file path: 
+
+```{r}
+fp = "~/../../Volumes/subseasonal_extreme/agu-manuscript-code/EESNs/"
+```
+
+# RMSEs
+
+## Data Steps
+
+Load and clean RMSEs:
+
+```{r}
+cv_rmses <-
+  readr::read_csv(
+    file = paste0(fp, "01-tuning-time-series-cv/results/cv-rmses.csv"), 
+    show_col_types = FALSE
+  ) |>
+  mutate(file = str_remove(file, ".csv")) |>
+  separate(
+    file,
+    c(
+      "target_region",
+      "tau",
+      "m",
+      "nh",
+      "nu"
+    ),
+    remove = FALSE
+  ) |>
+  mutate(
+    target_region = str_remove(target_region, "targetregion"),
+    tau = as.numeric(str_remove(tau, "tau")),
+    m = as.numeric(str_remove(m, "m")),
+    nh = as.numeric(str_remove(nh, "nh")),
+    nu = as.numeric(str_remove(nu, "nu")) / 100
+  )
+```
+
+## Overall Best
+
+Determine which parameters resulted in the lowest RMSEs:
+
+```{r}
+best_rmses <-
+  cv_rmses |>
+  filter(
+    rmse == min(rmse, na.rm = TRUE), 
+    .by = c(target_region, tau)
+  )
+```
+
+Print the best RMSEs:
+
+```{r}
+best_rmses |>
+  mutate(
+    rmse = round(rmse, 2),
+    rmse_extreme = round(rmse_extreme, 2)
+  ) |>
+  select(-file) |>
+  arrange(target_region, tau) |>
+  knitr::kable()
+```
+
+Save best rmses:
+
+```{r}
+write.csv(
+  best_rmses,
+  paste0(fp, "01-tuning-time-series-cv/results/cv-rmses-best.csv"),
+  row.names = FALSE
+)
+```
+
+Plot the best RMSEs:
+
+```{r}
+#| fig-height: 4
+#| fig-width: 6
+#| echo: false
+best_rmses |> 
+  ggplot(aes(x = tau, y = rmse, group = target_region, color = target_region)) + 
+  geom_line() +
+  geom_point() +
+  theme_light() + 
+  labs(
+    x = "Weeks Forecasted",
+    y = "RMSE",
+    title = "RMSEs by region (averaged over all test data)",
+    color = "Region"
+  ) + 
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 5, type = "continuous")
+  )
+```
+
+Plot the corresponding RMSEs on extremes:
+
+```{r}
+#| fig-height: 4
+#| fig-width: 6
+#| echo: false
+best_rmses |> 
+  ggplot(aes(x = tau, y = rmse_extreme, group = target_region, color = target_region)) +
+  geom_line() +
+  geom_point() +
+  theme_light() + 
+  labs(
+    x = "Weeks Forecasted",
+    y = "Extreme RMSE",
+    title = "RMSEs by region (averaged over extreme test data values)",
+    color = "Region"
+  ) + 
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 5, type = "continuous")
+  )
+```
+
+```{r}
+#| fig-height: 4
+#| fig-width: 14
+#| echo: false
+best_rmses |>
+  select(target_region:rmse_extreme) |>
+  pivot_longer(cols = rmse:rmse_extreme,  names_to = "data", values_to = "rmse") |>
+  mutate(rmse_computed_on = fct_recode(data, "all_test_data" = "rmse", "extremes only" = "rmse_extreme")) |>
+  ggplot(aes(x = tau, y = rmse, color = rmse_computed_on)) +
+  geom_line() +
+  geom_point() +
+  facet_grid(. ~ target_region) +
+  theme_light(base_size = 20) +
+  labs(
+    x = "Weeks Forecasted",
+    y = "RMSE",
+    title = "RMSEs by region",
+    color = "RMSE computed on",
+    linetype = "Model selected by \nbest RMSE on"
+  ) + 
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 2, type = "continuous")
+  )
+```
+
+## Best By Tuning Parameter
+
+Determine lowest RMSEs for each value of nu, input vars, forecast horizon, and target region:
+
+```{r}
+best_rmses_by_param <-
+  cv_rmses |>
+  select(-rmse_extreme) |>
+  filter(
+    rmse == min(rmse, na.rm = TRUE), 
+    .by = c(target_region, tau, nu)
+  ) |>
+  mutate(best_rmse = TRUE)
+  
+best_rmses_extremes_by_param <-
+  cv_rmses |>
+  select(-rmse) |>
+  filter(
+    rmse_extreme == min(rmse_extreme, na.rm = TRUE), 
+    .by = c(target_region, tau, nu)
+  ) |>
+  mutate(best_rmse = TRUE)
+```
+
+Plot the best RMSEs for each set of model iterations:
+
+```{r}
+#| fig-height: 4
+#| fig-width: 12
+#| echo: false
+best_rmses_by_param |> 
+  ggplot(aes(x = tau, y = rmse, color = factor(nu))) + 
+  geom_line() +
+  geom_point() +
+  facet_grid(. ~ target_region) +
+  theme_light() + 
+  labs(
+    x = "Weeks Forecasted",
+    y = "RMSE",
+    title = "RMSEs by region (averaged over all test data)"
+  ) + 
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 7, type = "continuous")
+  )
+```
+
+Plot the best RMSEs for each set of model iterations (considering extremes only):
+
+```{r}
+#| fig-height: 4
+#| fig-width: 12
+#| echo: false
+best_rmses_extremes_by_param |> 
+  ggplot(aes(x = tau, y = rmse_extreme, color = factor(nu))) + 
+  geom_line() +
+  geom_point() +
+  facet_grid(. ~ target_region) +
+  theme_light() + 
+  labs(
+    x = "Weeks Forecasted",
+    y = "RMSE",
+    title = "RMSEs by region (averaged over extreme test data values)"
+  ) + 
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 7, type = "continuous")
+  )
+```
+
+## Relationship to Tuning Params
+
+Plot of RMSEs (training data):
+
+```{r}
+#| fig-height: 8
+#| fig-width: 18
+#| echo: false
+cv_rmses |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau), 
+    nu = factor(nu)
+  ) |>
+  ggplot(aes(
+    x = nh,
+    y = rmse,
+    color = m,
+    group = m:nu,
+    linetype = nu
+  )) +
+  geom_line() +
+  geom_point() +
+  facet_grid(tau ~ target_region) +
+  theme_light(base_size = 14) +
+  labs(
+    x = "Number of Hidden Units",
+    y = "RMSE",
+    color = "m",
+    linetype = "Nu"
+  ) +
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 5, type = "continuous")
+  )
+```
+
+Plot of RMSEs for extreme observations only (testing data):
+
+```{r}
+#| fig-height: 8
+#| fig-width: 18
+#| echo: false
+cv_rmses |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu)
+  ) |>
+  ggplot(aes(
+    x = nh,
+    y = rmse_extreme,
+    color = m,
+    group = m:nu,
+    linetype = nu
+  )) +
+  geom_line() +
+  geom_point() +
+  facet_grid(tau ~ target_region) +
+  theme_light(base_size = 14) +
+  labs(
+    x = "Number of Hidden Units",
+    y = "RMSE",
+    color = "m",
+    linetype = "Nu"
+  ) +
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 5, type = "continuous")
+  )
+```

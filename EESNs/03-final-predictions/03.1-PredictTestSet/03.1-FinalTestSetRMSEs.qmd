@@ -1,0 +1,309 @@
+---
+title: "View EESN RMSEs on Final Test Set"
+subtitle: "Viewing and Comparing RMSEs from Tuned ESN Models on the Final Test Set"
+author: "Jacob Johnson"
+date: today
+format: 
+  html:
+    embed-resources: true
+    toc: true
+---
+
+```{r}
+########################################
+########################################
+## 13.4-CompareSubsetRMSEs.qmd        ##
+## Jacob Johnson                      ##
+## ---------------------------------- ##
+## Quarto document to visualize and   ##
+## compare the RMSEs on the finak     ##
+## holdout/test set                   ##
+## - Loads RMSEs                      ##
+## - Compares RMSE from all models    ##
+## ---------------------------------- ##
+## Version 14.1                       ##
+## This version focuses on using the  ##
+## best model from version 13 and     ##
+## using that model to predict the    ##
+## final holdout years 2021-2024      ##
+########################################
+########################################
+
+```
+
+# Set Up
+
+Packages:
+```{r message = FALSE}
+## Load packages
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(lubridate)
+library(patchwork)
+library(purrr)
+library(stringr)
+library(tidyr)
+library(wesanderson)
+```
+
+Specify file path: 
+```{r}
+## Path for working locally
+local_fp = "//cee/projects/subseasonal_extreme/"
+## Path for working on the CEE Compute Server
+cee_fp = "../../../"
+## Even More Local
+extra_local_fp = "~/"
+
+## Select which path to use
+fp = local_fp
+```
+
+# Models Chosen by Best Overall RMSE
+
+Load RMSEs for reach region and horizon:
+```{r}
+final_rmses_all <- read.csv(paste0(fp, "agu-manuscript-code/EESNs/03-final-predictions/results/Chosenby_AllData-rmses.csv"))
+
+## Make a column for horizion, region, and tuning settings
+final_rmses_all <- final_rmses_all |> 
+  mutate(file = str_remove(file, ".csv")) |>
+  separate(
+    file,
+    c("target_region",
+      "tau",
+      "m",
+      "nh",
+      "nu",
+      "nens",
+      "groups"),
+    remove = FALSE) |>
+  mutate(
+    target_region = str_remove(target_region, "targetregion"),
+    tau = as.numeric(str_remove(tau, "tau")),
+    m = as.numeric(str_remove(m, "m")),
+    nh = as.numeric(str_remove(nh, "nh")),
+    nu = as.numeric(str_remove(nu, "nu")) / 100,
+    groups = as.numeric(str_remove(groups, "groups"))) 
+
+## Write out Results
+write.csv(final_rmses_all, paste0(fp, "agu-manuscript-code/EESNs/03-final-predictions/results/Chosenby_AllData-final-rmses.csv"))
+
+```
+
+
+```{r}
+final_rmses_all |> 
+  select(-file) |>
+  knitr::kable()
+```
+
+
+
+# Models Chosen by Best Extreme RMSE
+
+Load RMSEs for reach region and horizon:
+```{r}
+final_rmses_extreme <- read.csv(paste0(fp, "agu-manuscript-code/EESNs/03-final-predictions/results/Chosenby_Extremes-rmses.csv"))
+
+## Make a column for horizion, region, and tuning settings
+final_rmses_extreme <- final_rmses_extreme |> 
+  mutate(file = str_remove(file, ".csv")) |>
+  separate(
+    file,
+    c("target_region",
+      "tau",
+      "m",
+      "nh",
+      "nu",
+      "nens",
+      "groups"),
+    remove = FALSE) |>
+  mutate(
+    target_region = str_remove(target_region, "targetregion"),
+    tau = as.numeric(str_remove(tau, "tau")),
+    m = as.numeric(str_remove(m, "m")),
+    nh = as.numeric(str_remove(nh, "nh")),
+    nu = as.numeric(str_remove(nu, "nu")) / 100,
+    groups = as.numeric(str_remove(groups, "groups"))) 
+
+## Write out Results
+write.csv(final_rmses_extreme, paste0(fp, "agu-manuscript-code/EESNs/03-final-predictions/results/Chosenby_Extremes-final-rmses.csv"))
+
+```
+
+
+```{r}
+final_rmses_all |> 
+  select(-file) |>
+  knitr::kable()
+```
+
+
+# Compare RMSEs 
+
+Plot the best overall RMSEs when optimizing using all test data:
+
+```{r}
+#| fig-height: 4
+#| fig-width: 6
+#| echo: false
+
+## Overall RMSEs when optimizing using all test data
+final_rmses_all |> 
+  filter(data == 'testing') |> 
+  ggplot(aes(
+    x = tau,
+    y = rmse,
+    color = target_region)) + 
+  geom_line() +
+  geom_point() +
+  theme_light() + 
+  labs(
+    x = "Forecast Horizon",
+    y = "Overall RMSE",
+    title = "Overall RMSE",
+    color = "Region"
+  ) + 
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 5, type = "continuous")
+  )
+```
+
+Plot the best extreme RMSEs when optimizing using only extremes:
+
+```{r}
+#| fig-height: 4
+#| fig-width: 6
+#| echo: false
+
+## Extreme RMSEs when optimizing using only extremes
+final_rmses_extreme |> 
+  filter(data == 'testing') |> 
+  ggplot(aes(
+    x = tau,
+    y = rmse_extreme,
+    color = target_region)) + 
+  geom_line() +
+  geom_point() +
+  theme_light() + 
+  labs(
+    x = "Forecast Horizon",
+    y = "Extreme RMSE",
+    title = "Extreme RMSE, Optimized on Extremes Only",
+    color = "Region"
+  ) + 
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 5, type = "continuous")
+  )
+```
+
+Compare Extreme vs All RMSE when optimizing for All
+
+```{r}
+#| fig-height: 4
+#| fig-width: 14
+#| echo: false
+#| 
+
+## Best overall RMSEs by optimization method, separated by region
+final_rmses_all |>
+  filter(data=='testing') |> 
+  pivot_longer(cols=c(rmse, rmse_extreme), 
+                      names_to='Type',
+                      values_to='rmse') |> 
+  ggplot(aes(
+    x = tau,
+    y = rmse,
+    color=Type)) +
+  geom_line() +
+  geom_point() +
+  facet_grid(. ~ target_region) +
+  theme_light(base_size = 20) +
+  labs(
+    x = "Forecast Horizon",
+    y = "RMSE",
+    color = "RMSE Type",
+    title = "RMSE, By Region and Type, when Chosen by All Data"
+  ) + 
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 2, type = "continuous")
+  )
+
+```
+
+
+
+Compare Extreme vs All RMSE when optimizing for Extreme RMSE
+
+```{r}
+#| fig-height: 4
+#| fig-width: 14
+#| echo: false
+#| 
+
+## Best overall RMSEs by optimization method, separated by region
+final_rmses_extreme |>
+  filter(data=='testing') |> 
+  pivot_longer(cols=c(rmse, rmse_extreme), 
+                      names_to='Type',
+                      values_to='rmse') |> 
+  ggplot(aes(
+    x = tau,
+    y = rmse,
+    color=Type)) +
+  geom_line() +
+  geom_point() +
+  facet_grid(. ~ target_region) +
+  theme_light(base_size = 20) +
+  labs(
+    x = "Forecast Horizon",
+    y = "RMSE",
+    color = "RMSE Type",
+    title = "RMSE, By Region and Type when Chosen by Extremes"
+  ) + 
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 2, type = "continuous")
+  )
+```
+
+Compare Extreme vs All RMSE by optimization method
+
+```{r}
+#| fig-height: 4
+#| fig-width: 14
+#| echo: false
+#| 
+
+## Best overall RMSEs by optimization method, separated by region
+final_rmses_extreme |>
+  pivot_longer(cols=c(rmse, rmse_extreme), 
+                      names_to='Type',
+                      values_to='rmse') |> 
+  mutate(Chosenby='extreme') |> 
+  bind_rows(
+    final_rmses_all |>
+      pivot_longer(cols=c(rmse, rmse_extreme), 
+                   names_to='Type',
+                   values_to='rmse') |> 
+      mutate(Chosenby='all')) |> 
+  filter(data == 'testing') |> 
+  ggplot(aes(
+    x = tau,
+    y = rmse,
+    color=Type, 
+    lty=Chosenby)) +
+  geom_line() +
+  geom_point() +
+  facet_grid(. ~ target_region) +
+  theme_light(base_size = 20) +
+  labs(
+    x = "Forecast Horizon",
+    y = "RMSE",
+    title = "RMSE, By Region, Type, and What the Groups were Chosen by"
+  ) + 
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 2, type = "continuous")
+  )
+```

@@ -1,0 +1,285 @@
+---
+title: "Compare Subset ESN RMSEs"
+subtitle: "Viewing and Comparing RMSEs from Tuned ESN Models with Varying Groups of Input Variables"
+author: "Jacob Johnson"
+date: today
+format: 
+  html:
+    embed-resources: true
+    toc: true
+---
+
+```{r}
+########################################
+########################################
+## 02.2-CompareSubsetRMSEs.qmd        ##
+## Jacob Johnson                      ##
+## ---------------------------------- ##
+## Quarto document to visualize and   ##
+## compare the RMSEs after the models ##
+## were run with varying numbers of   ##
+## groups of input variables          ##
+## - Loads RMSEs                      ##
+## - Compares RMSE from all models    ##
+## - Plots the best model by region   ##
+##   and forecast horizon and the     ##
+##   number of groups included        ##
+########################################
+########################################
+
+########################################
+########################################
+## This file chooses the model that   ##
+## has the lowest number of inputs    ##
+## that has an RMSE within 1% of the  ## 
+## lowest RMSE obtained               ##
+########################################
+########################################
+
+```
+
+# Set Up
+
+Packages:
+```{r message = FALSE}
+## Load packages
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(lubridate)
+library(patchwork)
+library(purrr)
+library(stringr)
+library(tidyr)
+library(wesanderson)
+```
+
+Specify file path: 
+```{r}
+## Path for working locally
+local_fp = "//cee/projects/subseasonal_extreme/"
+## Path for working on the CEE Compute Server
+cee_fp = "../../../"
+## Even More Local
+extra_local_fp = "~/"
+
+## Select which path to use
+fp = local_fp
+```
+
+# RMSEs
+
+Load RMSEs for reach region and horizon:
+```{r message = F}
+## Target Regions
+target_regions = c("MW", "NE", "SE", "SW", "W")
+
+## Load the RMSEs
+rmse_list <- list()
+for(target_region in c(target_regions)){
+  for(tau in 1:4){
+    
+    ## Load RMSEs
+    loaded_rmses <- readr::read_csv(
+      paste0(fp, 
+         "agu-manuscript-code/EESNs/02-grouped-feature-importance/results/rmses-BestSubset",
+         "/targetregion", toupper(target_region),
+         "-tau", ifelse(tau < 10, paste0(0, tau), tau),
+         "-rmses.csv")
+      )
+    
+    ## Save RMSEs
+    rmse_list[[paste0("targetregion", toupper(target_region),
+                      "-tau", ifelse(tau < 10, paste0(0, tau), tau))]] <- loaded_rmses
+
+  }
+}
+
+## Bind RMSE data frames together
+all_rmses <- do.call(rbind, rmse_list)
+
+## Make a column for horizion, region, and tuning settings
+all_rmses <- all_rmses |> 
+  mutate(file = str_remove(file, ".csv")) |>
+  separate(
+    file,
+    c("target_region",
+      "tau",
+      "m",
+      "nh",
+      "nu",
+      "nens",
+      "groups"),
+    remove = FALSE) |>
+  mutate(
+    target_region = str_remove(target_region, "targetregion"),
+    tau = as.numeric(str_remove(tau, "tau")),
+    m = as.numeric(str_remove(m, "m")),
+    nh = as.numeric(str_remove(nh, "nh")),
+    nu = as.numeric(str_remove(nu, "nu")) / 100,
+    groups = as.numeric(str_remove(groups, "groups"))) 
+
+## #write out Results
+write.csv(all_rmses, '../results/group-rmses.csv')
+
+
+## Find Best Models for each Region-Horizon Combination
+## lowest number of groups within 0.01 if the best rmse
+tol <- 0.01
+best_rmses <- all_rmses |> 
+  group_by(target_region, tau, data) |> 
+  summarize(min_rmse_all = min(rmse),
+            min_rmse_extreme = min(rmse_extreme)) |> 
+  mutate(tol_rmse_all = min_rmse_all * (1+tol),
+         tol_rmse_extreme = min_rmse_extreme  * (1+tol))
+
+plot_rmses <- all_rmses |> 
+  left_join(best_rmses, by=c("target_region", "tau", "data")) |> 
+  mutate(in_tol_all = (rmse <= tol_rmse_all),
+         in_tol_extreme = (rmse_extreme <= tol_rmse_extreme))
+
+best_models_all <- plot_rmses |> 
+  filter(in_tol_all == TRUE) |> 
+  group_by(target_region, tau, data) |> 
+  summarize(best_model_all = min(groups))
+
+write.csv(best_models_all, '../results/best-models-all.csv')
+
+best_models_extreme <- plot_rmses |> 
+  filter(in_tol_extreme == TRUE) |> 
+  group_by(target_region, tau, data) |> 
+  summarize(best_model_extreme = min(groups))
+
+write.csv(best_models_extreme, '../results/best-models-extreme.csv')
+
+## Join Back Together for Plotting
+plot_rmses <- plot_rmses |> 
+  left_join(best_models_all, by=c("target_region", "tau", "data")) |> 
+  left_join(best_models_extreme, by=c("target_region", "tau", "data")) 
+```
+
+## Test Set RMSE
+```{r}
+## Plot RMSE as a function of groups by horizon and region
+plot_rmses |> 
+  filter(data == "testing") |> 
+  ggplot(aes(
+    x=groups, 
+    y=rmse,
+    color=as.factor(tau))) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(. ~ target_region) +
+  ggtitle("Testing Set RMSE by Number of Groups") + 
+  labs(x="Number of Groups", color="Horizon") 
+
+## Plot RMSE as a function of groups by horizon and region
+plot_rmses |> 
+  filter(data == "testing") |> 
+  ggplot(aes(
+    x=groups, 
+    y=rmse,
+    color=as.factor(tau))) +
+  geom_line() +
+  geom_point() +
+  geom_vline(aes(xintercept=best_model_all, color=as.factor(tau)))+
+  facet_wrap(. ~ target_region) +
+  ggtitle("Testing Set RMSE by Number of Groups") + 
+  labs(x="Number of Groups", color="Horizon") 
+  
+plot_rmses |> 
+  filter(groups <11,
+         data == "testing") |> 
+  ggplot(aes(
+    x=groups, 
+    y=rmse,
+    color=as.factor(tau))) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(. ~ target_region) +
+  ggtitle("Testing Set RMSE by Number of Groups") + 
+  labs(x="Number of Groups", color="Horizon")
+
+
+```
+
+
+```{r fig.height=12}
+plot_rmses |> 
+  filter(data == "testing") |> 
+  ggplot(aes(
+    x=groups, 
+    y=rmse,
+    color=as.factor(tau))) +
+  geom_line() +
+  geom_point() +
+  geom_vline(aes(xintercept=best_model_all, color=as.factor(tau)))+
+  facet_wrap(. ~ target_region, ncol=1, scales="free") +
+  ggtitle('Testing Set RMSE by Number of Groups') + 
+  labs(x="Number of Groups", color="Horizon")
+
+```
+
+## Train Set RMSE
+```{r}
+## Plot RMSE as a function of groups by horizon and region
+plot_rmses |> 
+  filter(data == "training") |> 
+  ggplot(aes(
+    x=groups, 
+    y=rmse,
+    color=as.factor(tau))) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(. ~ target_region) +
+  ggtitle("Training Set RMSE by Number of Groups") + 
+  labs(x="Number of Groups", color="Horizon")
+
+plot_rmses |> 
+  filter(data == "training") |> 
+  ggplot(aes(
+    x=groups, 
+    y=rmse,
+    color=as.factor(tau))) +
+  geom_line() +
+  geom_point() +
+  geom_vline(aes(xintercept=best_model_all, color=as.factor(tau)))+
+  facet_wrap(. ~ target_region) +
+  ggtitle("Training Set RMSE by Number of Groups") + 
+  labs(x="Number of Groups", color="Horizon")
+
+plot_rmses |> 
+  filter(groups <11,
+         data == "training") |> 
+  ggplot(aes(
+    x=groups, 
+    y=rmse,
+    color=as.factor(tau))) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(. ~ target_region) +
+  ggtitle("Training Set RMSE by Number of Groups") + 
+  labs(x="Number of Groups", color="Horizon")
+
+
+```
+
+
+```{r fig.height=12}
+plot_rmses |> 
+  filter(data == "training") |> 
+  ggplot(aes(
+    x=groups, 
+    y=rmse,
+    color=as.factor(tau))) +
+  geom_line() +
+  geom_point() +
+  geom_vline(aes(xintercept=best_model_all, color=as.factor(tau)))+
+  facet_wrap(. ~ target_region, ncol=1, scales="free") +
+  ggtitle('Training Set RMSE by Number of Groups') + 
+  labs(x="Number of Groups", color="Horizon")
+
+```
+
+
+
