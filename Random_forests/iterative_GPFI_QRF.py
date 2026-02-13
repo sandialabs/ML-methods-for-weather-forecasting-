@@ -45,7 +45,7 @@ def train_and_evaluate_model(train_data, test_data, tuning_df, selected_features
     X_test = test_subset[feature_cols]
     y_test = test_subset[f"{region}_target"]
 
-    weekly_aves_test_subset = weekly_aves_test.loc[y_test.index,:]
+    #weekly_aves_test_subset = weekly_aves_test.loc[y_test.index,:]
     
 
     qrfmodel = RandomForestQuantileRegressor(
@@ -62,7 +62,8 @@ def train_and_evaluate_model(train_data, test_data, tuning_df, selected_features
     
     rmse = np.sqrt(mean_squared_error(y_pred, y_test))
     
-    z_data = weekly_aves_test_subset[zscore_col]
+    #z_data = weekly_aves_test_subset[zscore_col]
+    z_data = weekly_aves_test[zscore_col].shift(-horizon).loc[y_test.index]
     extreme_mask = (z_data < -1) | (z_data > 1)
     
     if extreme_mask.sum() > 0:  # Avoid errors if no extremes exist
