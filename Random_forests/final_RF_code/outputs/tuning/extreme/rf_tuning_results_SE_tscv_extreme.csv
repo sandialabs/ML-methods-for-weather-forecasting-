@@ -1,0 +1,5 @@
+Horizon,Best_Score,region,mode,max_depth,max_features,min_samples_leaf,min_samples_split,n_estimators
+1,3.1789494710392887,SE,extreme,50,,2,10,400
+2,3.6281239347968106,SE,extreme,20,,4,2,200
+3,3.6817910889399585,SE,extreme,20,sqrt,4,10,200
+4,3.691124997456473,SE,extreme,50,,1,2,200
