@@ -15,7 +15,8 @@ from subseasonal.tuning import (
     load_dev_training_data, 
     run_rf_grid_search, 
     save_tuning_results, 
-    extreme_scoring_function
+    extreme_scoring_function,
+    weighted_extreme_scoring_function
 )
 
 def main(region, mode="standard"):
@@ -26,10 +27,10 @@ def main(region, mode="standard"):
 
     # Load data -- we always load dev for tuning
     train_data, input_feature_cols = load_dev_training_data()
-    
+
     # Load raw data for z-scores if in extreme mode
     zscore_data = None
-    if mode == "extreme":
+    if mode in ("extreme", "weighted"):
         spec = SPLITS["dev"]
         # read_csv_with_date sets Date as index
         from subseasonal.io import read_csv_with_date
@@ -66,6 +67,16 @@ def main(region, mode="standard"):
                 raise ValueError(f"Index mismatch for {region} H{horizon}")
                 
             scorer = partial(extreme_scoring_function, zscore_target=z_target)
+            
+        elif mode == "weighted":
+            zscore_col = f"{region}_Zscore"
+            z_target = zscore_data[zscore_col].shift(-horizon).loc[X_train.index]
+            
+            # Ensure indices align 
+            if not X_train.index.equals(z_target.index):
+                raise ValueError(f"Index mismatch for {region} H{horizon}")
+                
+            scorer = partial(weighted_extreme_scoring_function, zscore_target=z_target)
         else:
             scorer = "neg_mean_squared_error"
 
@@ -87,6 +98,6 @@ def main(region, mode="standard"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--region", choices=REGIONS, required=True)
-    parser.add_argument("--mode", choices=["standard", "extreme"], default="standard")
+    parser.add_argument("--mode", choices=["standard", "extreme", "weighted"], default="standard")
     args = parser.parse_args()
     main(args.region, args.mode)

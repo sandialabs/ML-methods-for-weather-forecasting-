@@ -9,8 +9,9 @@ import pandas as pd
 import numpy as np
 
 from .io import read_csv_with_date, ensure_dir
-from .config import SPLITS, PROJECT_ROOT, DETREND_OUTPUTS, TUNING_DIR, RAW_DIR, REDUNDANT_COLS, MAX_LAG, REGIONS, HORIZONS
+from .config import SPLITS, PROJECT_ROOT, DETREND_OUTPUTS, TUNING_DIR, PFI_DIR, RAW_DIR, REDUNDANT_COLS, MAX_LAG, REGIONS, HORIZONS
 from .tuning import fill_or_default, parse_maxdepth
+from subseasonal.metrics import weighted_rmse_step, weighted_rmse_smooth
 
 
 def load_train_test_data_dev() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -188,8 +189,18 @@ def train_and_evaluate_model(train_data,
         rmse_extreme = np.sqrt(mean_squared_error(y_test[extreme_mask], y_pred[extreme_mask]))
     else:
         rmse_extreme = np.nan
+    # Convert to numpy arrays and remove any potential NaNs jointly
+    valid_mask = (~pd.isna(y_test.values)) & (~pd.isna(y_pred)) & (~pd.isna(z_data.values))
+            
+    y_true_valid = y_test.values[valid_mask]
+    y_pred_valid = y_pred[valid_mask]
+    z_valid = z_data.values[valid_mask]
+
+    # compute weighted scores ala Taggart 2022 (this is NOT a proper score!)
+    wrmse_step = weighted_rmse_step(y_true_valid, y_pred_valid, z_valid)
+    wrmse_smooth = weighted_rmse_smooth(y_true_valid, y_pred_valid, z_valid, alpha=1.0)
     
-    return rmse, rmse_extreme
+    return rmse, rmse_extreme, wrmse_step, wrmse_smooth
 
 
 
@@ -200,8 +211,8 @@ def save_final_GPFI_dataset(mode):
     for region in REGIONS:
         for horizon in HORIZONS:
             # File paths
-            gpfi_file = Path(PFI_DIR / f'GPFI_{region}_{horizon}_{mode}.csv')  
-            groups_file = Path(PFI_DIR / f'Groups_{region}_{horizon}_{mode}.csv') 
+            gpfi_file = Path(PFI_DIR / mode / f'GPFI_{region}_{horizon}_{mode}.csv')  
+            groups_file = Path(PFI_DIR / mode / f'Groups_{region}_{horizon}_{mode}.csv') 
            
             # Read the files
             try:

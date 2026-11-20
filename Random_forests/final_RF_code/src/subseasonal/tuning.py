@@ -1,6 +1,7 @@
 # /src/subseasonal/tuning.py
 from .io import read_csv_with_date, ensure_dir
 from .config import SPLITS, PROJECT_ROOT, DETREND_OUTPUTS, TUNING_DIR
+from .metrics import weighted_rmse_smooth
 from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
@@ -18,6 +19,7 @@ def load_dev_training_data() -> tuple[pd.DataFrame, list[str]]:
     # Merge inputs with residuals to get full training/testing sets
     train_data = pd.merge(train_residuals, regional_inputs, on="Date").set_index("Date")
     return train_data, input_feature_cols
+
 
 def extreme_scoring_function(estimator, X, y, zscore_target):
     """
@@ -42,6 +44,31 @@ def extreme_scoring_function(estimator, X, y, zscore_target):
         return -1e6
 
     return -mean_squared_error(y[mask], y_pred[mask])
+
+
+
+def weighted_extreme_scoring_function(estimator, X, y, zscore_target):
+    """
+    Custom scorer for GridSearchCV.
+
+    X.index is the reference_date t.
+    y is the residual target at forecast_date t+h.
+    zscore_target is a Series indexed by reference_date t, where values are
+    the TRUE z-scores at forecast_date t+h.
+
+    Returns weighted RMSE
+    """
+    alpha = 1
+    y_pred = estimator.predict(X)
+
+    # Align z-scores to the rows being scored
+    z_abs = np.abs(zscore_target.loc[X.index])
+    weights = 1.0 + alpha * np.maximum(0.0, z_abs - 1.0)
+    
+    mean_squared_weighted_error = np.sum(weights * (y - y_pred) ** 2) / np.sum(weights)
+    
+
+    return -mean_squared_weighted_error
 
 
 def run_rf_grid_search(param_grid, X_train, y_train, scoring = "neg_mean_squared_error"):

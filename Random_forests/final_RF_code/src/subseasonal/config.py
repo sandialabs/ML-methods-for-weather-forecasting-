@@ -13,7 +13,7 @@ PFI_DIR = OUTPUT_DIR / "feature_importance"
 PRED_DIR_FINAL = OUTPUT_DIR / "predictions_2021_2024_RF"
 RES_DIR_FINAL = OUTPUT_DIR / "RMSE_results_2021_2024_RF"
 PERSISTENCE_DIR = OUTPUT_DIR / "persistence"
-
+CONFORMAL_DIR = OUTPUT_DIR / "conformal"
 
 REGIONS = ["W", "SW", "MW", "SE", "NE"]
 REGION_ZSCORES = [f"{region}_Zscore" for region in REGIONS]
@@ -57,11 +57,15 @@ DETREND_OUTPUTS = {
     "dev": {
         "train_residuals_file": OUTPUT_DIR / "detrending" / "dev" / "train_residuals.csv",
         "test_residuals_file": OUTPUT_DIR / "detrending" / "dev" / "test_residuals.csv",
+        "test_preds_file": OUTPUT_DIR / "detrending" / "dev" / "test_preds.csv",
+        "train_preds_file": OUTPUT_DIR / "detrending" / "dev" / "train_preds.csv",
         "label": "dev",
     },
     "final": {
         "train_residuals_file": OUTPUT_DIR / "detrending" / "final" / "train_residuals.csv",
         "test_residuals_file": OUTPUT_DIR / "detrending" / "final" / "test_residuals.csv",
+        "test_preds_file": OUTPUT_DIR / "detrending" / "final" / "test_preds.csv",
+        "train_preds_file": OUTPUT_DIR / "detrending" / "final" / "train_preds.csv",
         "label": "final",
     }
     

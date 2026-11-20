@@ -23,21 +23,21 @@ def process_RF_data(model="RF"):
             + (offset % 52) + 1
         ).astype(int)
 
-        RF_preds["RF_SE"] = (
-        RF_preds["Pred_detrended"] -
-        RF_preds["Obs_detrended"]
+        preds["RF_SE"] = (
+        preds["Pred_detrended"] -
+        preds["Obs_detrended"]
         )**2
         
-        RF_preds["Clim_SE"] = (
-            RF_preds["Obs_detrended"]
+        preds["Clim_SE"] = (
+            preds["Obs_detrended"]
         )**2
         
         # positive = EESN better than climatology
-        RF_preds["d_t"] = (
-            RF_preds["Clim_SE"] -
-            RF_preds["RF_SE"]
+        preds["d_t"] = (
+            preds["Clim_SE"] -
+            preds["RF_SE"]
         )
-        return RF_preds
+        return preds
     else:
         preds = pd.read_csv(Path(PROJECT_ROOT / "notebooks"/ "test_pred_obs.csv"))
         eesn["EESN_SE"] = (

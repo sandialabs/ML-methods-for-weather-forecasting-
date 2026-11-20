@@ -43,6 +43,21 @@ def load_train_test_data_final() -> tuple[pd.DataFrame, pd.DataFrame]:
     test_data = pd.merge(test_residuals, regional_inputs, on="Date").set_index("Date")
     return train_data, test_data
 
+def load_train_test_data_dev() -> tuple[pd.DataFrame, pd.DataFrame]:
+    spec = SPLITS["dev"]
+    resid_spec = DETREND_OUTPUTS["dev"]
+    regional_inputs = read_csv_with_date(spec["inputs_file"])
+    
+    # drop columns deemed to be redundant from correlation analysis
+    regional_inputs = regional_inputs.drop(columns = REDUNDANT_COLS)
+    
+    train_residuals = read_csv_with_date(resid_spec["train_residuals_file"])
+    test_residuals = read_csv_with_date(resid_spec["test_residuals_file"])
+    # Merge inputs with residuals to get full training/testing sets
+    train_data = pd.merge(train_residuals, regional_inputs, on="Date").set_index("Date")
+    test_data = pd.merge(test_residuals, regional_inputs, on="Date").set_index("Date")
+    return train_data, test_data
+
 def get_best_features_for_region_horizon(results_df, region, horizon, rmse_col="Test_RMSE", tolerance=0.01):
     """
     Return the list of features corresponding to the best model
