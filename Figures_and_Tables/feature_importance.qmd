@@ -1,0 +1,617 @@
+---
+title: "Figures & Tables of Feature Importance Results"
+author: "Katherine Goode & Jacob Johnson"
+format:
+  html:
+    embed-resources: true
+---
+
+```{r}
+#| message: false
+library(cowplot)
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(stringr)
+library(tidyr)
+library(wesanderson)
+```
+
+File paths: 
+
+```{r}
+fp_cee = "~/../../Volumes/subseasonal_extreme/"
+fp_res_test = "weekly_ave_test/Results/weekly_model_results_2021-2024/"
+fp_rf = "RF/RF_Final_Code/outputs/"
+fp_res_test_eesn = 
+  "ML-methods-for-weather-forecasting-internal-dev/EESNs/results/"
+```
+
+# Data Preparation
+
+Load and starting cleaning of random forest data:
+
+```{r}
+#| warning: false
+rf_fi_temp <-
+  read.csv(paste0(
+    fp_cee,
+    fp_res_test,
+    fp_rf, 
+    "feature_importance/RF_final_top3_grouped_PFI_standard.csv"
+  )) |>
+  rename_all(.funs = tolower) |> 
+  rename(
+    target_region = region,
+    importance = mean_importance
+  ) |>
+  mutate(feature = str_remove(feature, "weekave_")) |>
+  separate(
+    feature,
+    into = c("var1", "var2", "var3", "var4", "var5"),
+    remove = FALSE
+  ) |>
+  rename(climate_var = var1) |>
+  mutate(
+    climate_var = ifelse(
+      var2 %in% c("500", "850"), 
+      paste0(climate_var, var2), 
+      climate_var
+  )) |>
+  mutate(
+    var2 = ifelse(
+      var2 %in% c("500", "850"), 
+      NA, 
+      var2
+  )) |> 
+  rename(region = var2) |>
+  mutate(
+    var6 = ifelse(
+      str_detect(var3, "pc"),
+      var3, 
+      ifelse(
+        str_detect(var3, "mean"), 
+        var3, 
+        NA
+      )
+    )
+  ) |>
+  mutate(
+    var3 = ifelse(
+      str_detect(var3, "pc"),
+      NA, 
+      ifelse(
+        str_detect(var3, "mean"), 
+        NA, 
+        var3
+      )
+    )
+  ) |>
+  mutate(
+    region = ifelse(
+      is.na(var3),
+      region, 
+      ifelse(
+        is.na(region),
+        var3, 
+        paste0(region, "_", var3) 
+      )
+  )) |>
+  select(-var3) |>
+  mutate(
+    var7 = ifelse(
+      str_detect(var4, "pc"),
+      var4, 
+      ifelse(
+        str_detect(var4, "mean"), 
+        var4, 
+        NA
+      )
+    )
+  ) |>
+  mutate(
+    var4 = ifelse(
+      str_detect(var4, "pc"),
+      NA, 
+      ifelse(
+        str_detect(var4, "mean"), 
+        NA, 
+        var4
+      )
+    )
+  ) |>
+  mutate(
+    region = ifelse(
+      is.na(var4),
+      region,  
+      ifelse(
+        is.na(region),
+        var4, 
+        paste0(region, "_", var4) 
+      )
+  )) |>
+  select(-var4) |>
+  rename(stat = var5) |>
+  mutate(
+    stat = ifelse(
+      is.na(stat) & is.na(var6), 
+      var7,
+      ifelse(
+        is.na(stat) & is.na(var7),
+        var6, 
+        stat
+      )
+  )) |>
+  select(-var6, -var7)
+```
+
+More cleaning of random forest data:
+
+```{r}
+rf_fi_temp2 <- 
+  rf_fi_temp |>
+  mutate(
+    region = ifelse(is.na(region), "temp", region),
+    stat = ifelse(is.na(stat), "temp", stat),
+    climate_var = ifelse(
+      climate_var %in% c("MW", "NE", "SW", "W"), 
+      "current_week",
+      climate_var
+    ),
+    climate_var = toupper(climate_var),
+    climate_var = str_replace(climate_var, "CURRENT_WEEK", "Current Week"),
+    climate_var = factor(
+      climate_var,
+      levels = c("Current Week", "H500", "H850", "SLP", "T500", "T850", "TS")
+    ),
+    importance = round(importance, 2),
+    region = fct_recode(
+      region, 
+      "AR" = "arctic",
+      "NA" = "atlantic_ocean",
+      "TA" = "atlantic_trop",
+      "US" = "conus",
+      "target" = "current_week",
+      "EA" = "east_asia",
+      "MC" = "mexico_gulf",
+      "NP" = "pacific_ocean",
+      "TP" = "pacific_trop",
+      "CA" = "southern_canada"
+    )
+  ) |>
+  select(target_region, horizon, group, climate_var, region, stat, importance)
+```
+
+Compute ranks associated with random forest FI: 
+
+```{r}
+rf_fi_ranks <-
+  rf_fi_temp2 |> 
+  select(target_region, horizon, group, importance) |> 
+  distinct() |>
+  arrange(target_region, horizon, desc(importance)) |>
+  mutate(rank = 1:n(), .by = c(target_region, horizon))
+```
+
+Complete cleaning of random forest data:
+
+```{r}
+rf_fi <-
+  rf_fi_temp2 |>
+  left_join(rf_fi_ranks, by = join_by(target_region, horizon, group, importance)) |>
+  mutate(facet = paste0("Group: ", rank, "\n Importance: ", importance)) |>
+  summarise(
+    stat = paste(unique(stat), collapse = "\n"),
+    .by = -stat
+  )
+```
+
+Load and clean ESN data:
+
+```{r}
+esn_fi_raw = read.csv("../EESNs/results/gpfi-final-nreps30.csv") 
+
+esn_fi <-
+  esn_fi_raw |>
+  filter(rep == "fi_rep1") |>
+  filter(rank <= 3) |>
+  select(region, tau, group, climate_var, input_region, stat, fi_ave, rank) |>
+  mutate(facet = paste0("Group: ", rank, "\n Importance: ", round(fi_ave, 3))) |>
+  mutate(climate_var = fct_recode(
+    climate_var, 
+    "SLP" = "slp", 
+    "T500" = "t500", 
+    "H850" = "h850"
+  )) |>
+  mutate(climate_var = factor(climate_var, levels = unique(rf_fi$climate_var))) |>
+  mutate(input_region = fct_recode(
+    input_region, 
+    "MC" = "mexico_gulf",
+    "NP" = "pacific_ocean",
+    "AR" = "arctic",
+    "TP" = "pacific_trop",
+    "CA" = "southern_canada",
+    "TA" = "atlantic_trop",
+    "NA" = "atlantic_ocean",
+    "US" = "conus",
+    "EA" = "east_asia"   
+  )) |>
+  rename(target_region = region) |>
+  rename(region = input_region, horizon = tau, importance = fi_ave)
+```
+
+# Color Preparation and Legends
+
+Attach colors to regions:
+
+```{r}
+regions = sort(as.character(unique(c(rf_fi$region, esn_fi$region))))
+region_colors <-
+  wesanderson::wes_palette(
+    name = "Zissou1",
+    n = length(regions),
+    type = "continuous"
+  )
+
+regions_and_colors = data.frame(region = sort(regions), color = region_colors)
+```
+
+Attach colors to the data frames:
+
+```{r}
+rf_fi_with_colors <-
+  rf_fi |> 
+  left_join(regions_and_colors, by = join_by(region)) |>
+  mutate(region = factor(region, levels = sort(regions)))
+
+esn_fi_with_colors <-
+  esn_fi |> 
+  left_join(regions_and_colors, by = join_by(region)) |>
+  mutate(region = factor(region, levels = sort(regions)))
+```
+
+Pull colors specific to model:
+
+```{r}
+rf_colors <-
+  rf_fi_with_colors |>
+  select(region, color) |>
+  distinct() |>
+  arrange(region)
+
+esn_colors <-
+  esn_fi_with_colors |>
+  select(region, color) |>
+  distinct() |>
+  arrange(region)
+```
+
+Prepare legends:
+
+```{r}
+rf_legend_plot <- 
+  rf_fi |>
+  mutate(region = factor(region, levels = rf_colors$region)) |>
+  ggplot(aes(x = climate_var, y = region, fill = region)) + 
+  geom_tile() + 
+  geom_text(aes(label = stat)) + 
+  facet_grid(horizon + facet ~ ., scales = "free_y", space = "free_y", switch = "y") +
+  scale_x_discrete(position = "top", drop = FALSE) + 
+  scale_y_discrete(position = "right") + 
+  scale_fill_manual(values = rf_colors$color) +
+  theme_bw() +
+  theme(
+    strip.text.y.left = element_text(angle = 0),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    plot.title.position = "plot",
+    panel.grid = element_blank()
+  ) + 
+  labs(fill = "Region")
+
+esn_legend_plot <-
+  esn_fi |>
+  mutate(region = factor(region, levels = esn_colors$region)) |>
+  ggplot(aes(x = climate_var, y = region, fill = region)) + 
+  geom_tile() + 
+  geom_text(aes(label = stat)) + 
+  facet_grid(horizon + facet ~ ., scales = "free_y", space = "free_y", switch = "y") +
+  scale_x_discrete(position = "top", drop = FALSE) + 
+  scale_y_discrete(position = "right") + 
+  scale_fill_manual(values = esn_colors$color) +
+  theme_bw() +
+  theme(
+    strip.text.y.left = element_text(angle = 0),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    plot.title.position = "plot",
+    panel.grid = element_blank()
+  ) + 
+  labs(fill = "Region")
+```
+
+Extract legends:
+
+```{r}
+rf_legend = rf_legend_plot |> cowplot::get_legend()
+esn_legend = esn_legend_plot |> cowplot::get_legend()
+```
+
+# Plots
+
+## Functions
+
+```{r}
+create_fi_plot <- function(data, reg, hor, cols) {
+  data |>
+    filter(horizon == hor, target_region == reg) |>
+    mutate(region = factor(region, levels = regions_and_colors$region)) |>
+    ggplot(aes(x = climate_var, y = region, fill = region)) + 
+    geom_tile() + 
+    geom_text(aes(label = stat)) + 
+    facet_grid(facet ~ ., scales = "free_y", space = "free_y", switch = "y") +
+    scale_x_discrete(position = "top", drop = FALSE) + 
+    scale_y_discrete(position = "right") + 
+    scale_fill_manual(
+      values = cols |> 
+        filter(horizon == hor, target_region == reg) |> 
+        distinct(region, color) |> 
+        arrange(region) |>
+        pull(color)
+    ) +
+    theme_bw() +
+    theme(
+      legend.position = "none",
+      strip.text.y.left = element_text(angle = 0),
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      plot.title.position = "plot",
+      panel.grid = element_blank()
+    ) + 
+    labs(
+      title = paste0("Lead-Time: ", hor, "-week")
+    )
+}
+```
+
+```{r}
+join_fi_plots <- function(plot1, plot2, plot3, plot4, legend, reg) {
+  
+  plot_no_legend <- 
+    plot_grid(
+      plot1,
+      plot2,
+      plot3,
+      plot4,
+      nrow = 2,
+      ncol = 2
+    )
+
+  plot_with_legend <-
+    plot_grid(
+      plot_no_legend, 
+      legend, 
+      rel_widths = c(3, .2)
+    )
+  
+  title <- 
+    ggdraw() + 
+    draw_label(
+      paste0("Region: ", reg),
+      x = 0,
+      hjust = 0
+    ) +
+    theme(
+      # Align title with the left edge of the first plot
+      plot.margin = margin(0, 0, 0, 7)
+    )
+  
+  plot_grid(title, plot_with_legend, ncol = 1, rel_heights = c(0.05, 1))
+  
+}
+```
+
+## Random Forest
+
+Create plots:
+
+```{r}
+plot_rf_MW <-
+  join_fi_plots(
+    create_fi_plot(data = rf_fi, reg = "MW", hor = 1, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "MW", hor = 2, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "MW", hor = 3, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "MW", hor = 4, cols = rf_fi_with_colors),
+    rf_legend,
+    reg = "Midwest"
+)
+
+plot_rf_NE <-
+  join_fi_plots(
+    create_fi_plot(data = rf_fi, reg = "NE", hor = 1, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "NE", hor = 2, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "NE", hor = 3, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "NE", hor = 4, cols = rf_fi_with_colors),
+    rf_legend,
+    reg = "Northeast"
+)
+
+plot_rf_SE <-
+  join_fi_plots(
+    create_fi_plot(data = rf_fi, reg = "SE", hor = 1, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "SE", hor = 2, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "SE", hor = 3, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "SE", hor = 4, cols = rf_fi_with_colors),
+    rf_legend,
+    reg = "Southeast"
+)
+
+plot_rf_SW <-
+  join_fi_plots(
+    create_fi_plot(data = rf_fi, reg = "SW", hor = 1, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "SW", hor = 2, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "SW", hor = 3, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "SW", hor = 4, cols = rf_fi_with_colors),
+    rf_legend,
+    reg = "Southwest"
+)
+
+plot_rf_W <-
+  join_fi_plots(
+    create_fi_plot(data = rf_fi, reg = "W", hor = 1, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "W", hor = 2, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "W", hor = 3, cols = rf_fi_with_colors),
+    create_fi_plot(data = rf_fi, reg = "W", hor = 4, cols = rf_fi_with_colors),
+    rf_legend,
+    reg = "West"
+)
+```
+
+```{r}
+#| fig-height: 8
+#| fig-width: 11
+#| echo: false
+#| warning: false
+plot_rf_MW
+plot_rf_NE
+plot_rf_SE
+plot_rf_SW
+plot_rf_W
+```
+
+## Echo State Network
+
+Create plots:
+
+```{r}
+plot_esn_MW <-
+  join_fi_plots(
+    create_fi_plot(data = esn_fi, reg = "MW", hor = 1, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "MW", hor = 2, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "MW", hor = 3, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "MW", hor = 4, cols = esn_fi_with_colors),
+    esn_legend,
+    reg = "Midwest"
+)
+
+plot_esn_NE <-
+  join_fi_plots(
+    create_fi_plot(data = esn_fi, reg = "NE", hor = 1, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "NE", hor = 2, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "NE", hor = 3, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "NE", hor = 4, cols = esn_fi_with_colors),
+    esn_legend,
+    reg = "Northeast"
+)
+
+plot_esn_SE <-
+  join_fi_plots(
+    create_fi_plot(data = esn_fi, reg = "SE", hor = 1, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "SE", hor = 2, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "SE", hor = 3, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "SE", hor = 4, cols = esn_fi_with_colors),
+    esn_legend,
+    reg = "Southeast"
+)
+
+plot_esn_SW <-
+  join_fi_plots(
+    create_fi_plot(data = esn_fi, reg = "SW", hor = 1, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "SW", hor = 2, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "SW", hor = 3, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "SW", hor = 4, cols = esn_fi_with_colors),
+    esn_legend,
+    reg = "Southwest"
+)
+
+plot_esn_W <-
+  join_fi_plots(
+    create_fi_plot(data = esn_fi, reg = "W", hor = 1, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "W", hor = 2, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "W", hor = 3, cols = esn_fi_with_colors),
+    create_fi_plot(data = esn_fi, reg = "W", hor = 4, cols = esn_fi_with_colors),
+    esn_legend,
+    reg = "West"
+)
+```
+
+```{r}
+#| fig-height: 8
+#| fig-width: 11
+#| echo: false
+#| warning: false
+plot_esn_MW
+plot_esn_NE
+plot_esn_SE
+plot_esn_SW
+plot_esn_W
+```
+
+## Save Plots
+
+Save figures:
+
+```{r}
+ggsave('figs/FeatureImportanceRF_MW.png', plot_rf_MW, width = 11.5, height = 8)
+ggsave('figs/FeatureImportanceRF_NE.png', plot_rf_NE, width = 11.5, height = 8)
+ggsave('figs/FeatureImportanceRF_SE.png', plot_rf_SE, width = 11.5, height = 8)
+ggsave('figs/FeatureImportanceRF_SW.png', plot_rf_SW, width = 11.5, height = 8)
+ggsave('figs/FeatureImportanceRF_W.png', plot_rf_W, width = 11.5, height = 8)
+
+ggsave('figs/FeatureImportanceEESN_MW.png', plot_esn_MW, width = 11.5, height = 8)
+ggsave('figs/FeatureImportanceEESN_NE.png', plot_esn_NE, width = 11.5, height = 8)
+ggsave('figs/FeatureImportanceEESN_SE.png', plot_esn_SE, width = 11.5, height = 8)
+ggsave('figs/FeatureImportanceEESN_SW.png', plot_esn_SW, width = 11.5, height = 8)
+ggsave('figs/FeatureImportanceEESN_W.png', plot_esn_W, width = 11.5, height = 8)
+```
+
+# All ESN FI Results
+
+```{r}
+esn_fi_top3 <-
+  esn_fi_raw |> 
+  filter(rep == "fi_rep1", rank <= 3) |>
+  rename(horizon = tau) |>
+  select(region, horizon, groups, rank, climate_var, input_region, stat, groupvars) |>
+  distinct()
+```
+
+```{r}
+esn_rmses <-
+  read.csv("../EESNs/results/final-rmses-chosen-by-all-data.csv") |>
+  filter(data == "testing") |>
+  rename(horizon = tau) |>
+  select(target_region, horizon, rmse) |>
+  rename(region = target_region)
+```
+
+```{r}
+esn_fi_top3_df <-
+  esn_fi_top3 |> 
+  select(region, horizon, groups, rank, groupvars) |>
+  mutate(groupvars = str_replace_all(groupvars, "\n", " ")) |>
+  distinct() |>
+  mutate(rank = paste0("Group ", rank)) |>
+  left_join(esn_rmses, by = join_by(region, horizon)) |>
+  select(region, horizon, rmse, groups, rank, groupvars) |>
+  pivot_wider(names_from = rank, values_from = groupvars) |>
+  mutate(rmse = round(rmse, 3)) |>
+  rename(
+    Region = region,
+    Horizon = horizon,
+    RMSE = rmse,
+    `Total Groups` = groups
+  )
+```
+
+```{r}
+esn_fi_top3_df |>
+  knitr::kable()
+```
+
+```{r}
+esn_fi_top3_df |> 
+  xtable::xtable() |> 
+  print(include.rownames = FALSE)
+```
+

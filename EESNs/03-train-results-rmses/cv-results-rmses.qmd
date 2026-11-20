@@ -1,0 +1,571 @@
+---
+title: "RMSEs from Time Series CV on Training Data"
+subtitle: "Now with Deep EESNs"
+author: Katherine Goode
+date: today
+format: 
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 3
+execute:
+  fig-dpi: 300
+---
+
+# Set Up
+
+Load packages:
+
+```{r message = FALSE}
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(stringr)
+library(tidyr)
+library(wesanderson)
+```
+
+Specify file path: 
+
+```{r}
+fp = "../results/"
+#fp = "~/../../Volumes/subseasonal_extreme/"
+```
+
+# Data Steps
+
+Load and clean RMSEs:
+
+```{r}
+cv_rmses <-
+  readr::read_csv(
+    file = paste0(fp, "cv-rmses.csv"), 
+    show_col_types = FALSE
+  ) |>
+  mutate(file = str_remove(file, ".csv")) |>
+  separate(
+    file,
+    c(
+      "target_region",
+      "tau",
+      "m",
+      "nlayers",
+      "nh",
+      "nu",
+      "nens"
+    ),
+    remove = FALSE
+  ) |>
+  mutate(
+    target_region = str_remove(target_region, "targetregion"),
+    tau = as.numeric(str_remove(tau, "tau")),
+    m = as.numeric(str_remove(m, "m")),
+    nlayers = as.numeric(str_remove(nlayers, "nlayers")),
+    nh = as.numeric(str_remove(nh, "nh")),
+    nu = as.numeric(str_remove(nu, "nu")) / 100,
+    nens = as.numeric(str_remove(nens, "nens")),
+  )
+```
+
+# Best RMSEs
+
+Determine which parameters resulted in the lowest RMSEs, extreme RMSEs, and weighted RMSEs (for both cases with all 5 folds or only 4th and 5th folds):
+
+```{r}
+best_rmses <-
+  cv_rmses |>
+  select(-file) |>
+  pivot_longer(
+    cols = c(rmse, rmse_extreme, rmse_weighted), 
+    names_to = "rmse_type", 
+    values_to = "rmse"
+  ) |>
+  filter(
+    rmse == min(rmse, na.rm = TRUE), 
+    .by = c(target_region, tau, rmse_type, folds)
+  )
+```
+
+Print the best RMSEs:
+
+```{r}
+best_rmses |>
+  filter(rmse_type == "rmse") |>
+  mutate(
+    rmse = round(rmse, 2)
+  ) |>
+  arrange(target_region, tau) |>
+  knitr::kable()
+```
+
+Print the best extreme RMSEs:
+
+```{r}
+best_rmses |>
+  filter(rmse_type == "rmse_extreme") |>
+  mutate(
+    rmse = round(rmse, 2)
+  ) |>
+  arrange(target_region, tau) |>
+  knitr::kable()
+```
+
+Print the best weighted RMSEs:
+
+```{r}
+best_rmses |>
+  filter(rmse_type == "rmse_weighted") |>
+  mutate(
+    rmse = round(rmse, 2)
+  ) |>
+  arrange(target_region, tau) |>
+  knitr::kable()
+```
+
+Plot the best RMSEs:
+
+```{r}
+#| fig-height: 5
+#| fig-width: 8
+#| echo: false
+best_rmses |> 
+  ggplot(aes(x = tau, y = rmse, group = target_region, color = target_region)) + 
+  geom_line() +
+  geom_point() +
+  facet_grid(folds ~ rmse_type) +
+  theme_light() + 
+  labs(
+    x = "Weeks Forecasted",
+    y = "RMSE",
+    title = "RMSEs by region (averaged over all test data)",
+    color = "Region"
+  ) + 
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 5, type = "continuous")
+  )
+```
+
+Plot the comparison of RMSEs between the best tuning parameters determine based on all folds or only folds 4 and 5.
+
+```{r}
+#| fig-height: 6
+#| fig-width: 8
+#| echo: false
+best_rmses |>
+  mutate(
+    rmse = round(rmse, 2)
+  ) |>
+  ggplot(aes(x = tau, y = rmse, color = folds)) + 
+  geom_point() + 
+  geom_line() +
+  facet_grid(rmse_type ~ target_region) + #, scales = "free_y") + 
+  theme_light() +
+  labs(
+    x = "Forecast Horizon (weeks)",
+    y = "RMSE",
+    color = "Folds"
+  )
+```
+
+Save best RMSEs (only from folds 4 and 5):
+
+```{r}
+best_rmses |> 
+  filter(folds == "4_and_5", rmse_type == "rmse") |> 
+  select(-rmse_type) |>
+  write.csv(
+    paste0(fp, "cv-rmses-best.csv"),
+    row.names = FALSE
+  )
+```
+
+# Best RMSEs By Number of Layers
+
+Compute the best RMSEs for each number of ESN layers:
+
+```{r}
+best_rmses_by_layers <-
+  cv_rmses |>
+  select(-file) |>
+  filter(folds == '4_and_5') |>
+  pivot_longer(
+    cols = c(rmse, rmse_extreme, rmse_weighted), 
+    names_to = "rmse_type", 
+    values_to = "rmse"
+  ) |>
+  filter(
+    rmse == min(rmse, na.rm = TRUE), 
+    .by = c(target_region, tau, rmse_type, nlayers)
+  )
+```
+
+Plot the best RMSEs for each set of model iterations:
+
+```{r}
+#| fig-height: 6
+#| fig-width: 12
+#| echo: false
+best_rmses_by_layers |> 
+  ggplot(aes(x = tau, y = rmse, group = nlayers, color = factor(nlayers))) + 
+  geom_line() +
+  geom_point() +
+  facet_grid(rmse_type ~ target_region, scales = "free_y") +
+  theme_light() + 
+  labs(
+    x = "Weeks Forecasted",
+    y = "RMSE",
+    title = "RMSEs by region (averaged over all test data)"
+  ) + 
+  scale_color_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  )
+```
+
+## Histograms of RMSEs
+
+### Midwest
+
+```{r}
+#| fig-height: 6
+#| fig-width: 16
+#| echo: false
+cv_rmses |>
+  filter(target_region == "MW") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) + 
+  labs(title = "MW (all data)")
+
+cv_rmses |>
+  filter(target_region == "MW") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse_extreme, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) +
+  labs(title = "MW (extremes only)")
+
+cv_rmses |>
+  filter(target_region == "MW") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse_weighted, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) +
+  labs(title = "MW (weighted RMSEs)")
+```
+
+### Northeast
+
+```{r}
+#| fig-height: 6
+#| fig-width: 16
+#| echo: false
+cv_rmses |>
+  filter(target_region == "NE") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) + 
+  labs(title = "NE (all data)")
+
+cv_rmses |>
+  filter(target_region == "NE") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse_extreme, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) +
+  labs(title = "NE (extremes only)")
+```
+
+### Southeast
+
+```{r}
+#| fig-height: 6
+#| fig-width: 16
+#| echo: false
+cv_rmses |>
+  filter(target_region == "SE") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) + 
+  labs(title = "SE (all data)")
+
+cv_rmses |>
+  filter(target_region == "SE") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse_extreme, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) +
+  labs(title = "SE (extremes only)")
+```
+
+### Southwest
+
+```{r}
+#| fig-height: 6
+#| fig-width: 16
+#| echo: false
+cv_rmses |>
+  filter(target_region == "SW") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) + 
+  labs(title = "SW (all data)")
+
+cv_rmses |>
+  filter(target_region == "SW") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse_extreme, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) +
+  labs(title = "SW (extremes only)")
+
+cv_rmses |>
+  filter(target_region == "SW") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse_weighted, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) +
+  labs(title = "SW (weighted RMSEs)")
+```
+
+### West
+
+```{r}
+#| fig-height: 6
+#| fig-width: 16
+#| echo: false
+cv_rmses |>
+  filter(target_region == "W") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) + 
+  labs(title = "W (all data)")
+
+cv_rmses |>
+  filter(target_region == "W") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse_extreme, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) +
+  labs(title = "W (extremes only)")
+
+cv_rmses |>
+  filter(target_region == "W") |>
+  mutate(
+    nh = factor(nh),
+    m = factor(m),
+    tau = factor(tau),
+    nu = factor(nu),
+    nlayers = factor(nlayers)
+  ) |>
+  ggplot(aes(
+    x = rmse_weighted, 
+    fill = nlayers
+  )) +
+  geom_histogram(bins = 30) + 
+  facet_grid(
+    paste("nlayers:", nlayers) ~ paste("horizon:", tau), 
+    scales = "free_x"
+  ) +
+  theme_light(base_size = 14) +
+  scale_fill_manual(
+    values = wes_palette(name = "Zissou1", n = 3, type = "continuous")
+  ) +
+  labs(title = "W (weighted RMSEs)")
+```

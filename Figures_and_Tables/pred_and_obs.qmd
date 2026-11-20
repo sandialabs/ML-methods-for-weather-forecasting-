@@ -1,0 +1,859 @@
+---
+title: "Figures & Tables Comparing Model Performances"
+author: "Katherine Goode"
+format:
+  html:
+    embed-resources: true
+    toc: true
+---
+
+Load packages:
+
+```{r}
+#| message: false
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(MetBrewer)
+library(patchwork)
+library(stringr)
+library(tidyr)
+```
+
+File paths: 
+
+```{r}
+fp_cee = "~/../../Volumes/subseasonal_extreme/"
+fp_res_test = "weekly_ave_test/Results/weekly_model_results_2021-2024/"
+fp_rf = "RF/RF_Final_Code/outputs/"
+fp_res_test_eesn = 
+  "ML-methods-for-weather-forecasting-internal-dev/EESNs/results/"
+```
+
+Colors
+
+```{r}
+cols_models = met.brewer(name = "Egypt", n = 4, type = "discrete")
+```
+
+# Load Predictions
+
+Load RF predictions:
+
+```{r}
+preds_rf <-
+  read.csv(paste0(
+    fp_cee,
+    fp_res_test,
+    fp_rf,
+    "predictions_2021_2024_RF/RF_preds_standard_2021_2024.csv"
+  )) |>
+  rename_all(.funs = tolower) |>
+  rename(
+    date = forecast_date,
+    obs = observed,
+    pred_rf = predicted,
+    pred_detrended_rf = pred_detrended
+  ) |>
+  separate(
+    date, 
+    into = c("year", "week"), 
+    sep = 4, 
+    remove = TRUE
+  ) |> 
+  mutate(
+    year = as.numeric(year),
+    week = as.numeric(week),
+    newyears = ymd(paste0(year,"-01-01")),
+    date = newyears + weeks(week),
+    extreme = ifelse(abs(z_score) >= 1, T, F)
+  ) |>
+  arrange(region, horizon, date) |>
+  select(
+    region, 
+    horizon,
+    date, 
+    year, 
+    week,
+    obs,
+    obs_detrended, 
+    pred_rf, 
+    pred_detrended_rf,
+    z_score,
+    extreme
+  )
+```
+
+Load EESN predictions:
+
+```{r}
+preds_eesn <-
+  read.csv(file = paste0(
+    fp_cee, 
+    fp_res_test_eesn,
+    "final-preds-chosen-by-all-data.csv"
+  )) |>
+  rename(pred_detrended_eesn = pred) |>
+  mutate(
+    newyears = ymd(paste0(year,"-01-01")),
+    date = newyears + weeks(week)
+  ) |>
+  filter(
+    data != "training",
+    year < 2025
+  ) |>
+  select(-data, -newyears) |>
+  select(region, horizon, date, year, week, pred_detrended_eesn) |>
+  arrange(region, horizon, date)
+```
+
+Join predictions: 
+
+```{r}
+preds <-
+  full_join(
+    preds_rf,
+    preds_eesn,
+    by = join_by(horizon, region, date, year, week)
+  ) |>
+  mutate(extreme = ifelse(extreme, "extreme", NA)) |>
+  select(
+    horizon,
+    region,
+    date,
+    year,
+    week,
+    z_score,
+    extreme,
+    obs,
+    obs_detrended,
+    pred_rf,
+    pred_detrended_rf,
+    pred_detrended_eesn,
+    everything()
+  )
+```
+
+# Figures
+
+## Observed and Predicted Over Time
+
+```{r}
+#| fig-height: 10
+#| fig-width: 12
+#| echo: false
+
+preds_mw <-
+  preds |> 
+  filter(region == "MW") |>
+  mutate(horizon = paste0("Horizon: ", horizon))
+
+plot_preds_mw <-
+  preds_mw |>
+  ggplot() +
+  geom_line(
+    aes(x = date, y = obs_detrended, color = 'Observed'),
+    linewidth = 0.5
+  ) +
+  geom_line(
+    aes(x = date, y = pred_detrended_eesn, color = "EESN Predictions"),
+    linewidth = 0.75
+  ) +
+  geom_line(
+    aes(x = date, y = pred_detrended_rf, color = "RF Predictions"),
+    linewidth = 0.75
+  ) +
+  geom_point(
+    data = preds_mw |> filter(extreme == "extreme"), 
+    aes(x = date, y = obs_detrended, color = "Observed extremes")
+  ) +
+  facet_wrap(. ~ horizon, nrow = 4) +
+  scale_y_continuous(breaks = scales::breaks_width(2.5)) +
+  scale_color_manual(
+    breaks = c(
+      "Observed",
+      "RF Predictions",
+      "EESN Predictions",
+      "Observed extremes"
+    ),
+    values = c(
+      "Observed" = "black",
+      "RF Predictions" = cols_models[4],
+      "EESN Predictions" = "dodgerblue",
+      "Observed extremes" = "red3"
+    )
+  ) +
+  theme_minimal() +
+  theme(        
+    axis.line.y = element_line(color = "black"),
+    axis.text = element_text(size = 12),
+    axis.ticks.y = element_line(color = "black"),
+    axis.ticks.length = unit(3, "pt"),
+    axis.title = element_text(size = 16),
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    legend.title = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.grid.major.x = element_line(color = "grey90", linewidth = 0.15),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.y = element_line(color = "grey90", linewidth = 0.15),
+    plot.title.position = "plot",
+    plot.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "plain"),
+    strip.text.x = element_text(size = 16),
+    title = element_text(size = 14)
+  ) +
+  labs(
+    title = "Region MW: Observed vs Predicted Time Series",
+    x = 'Week',
+    y = 'T2M residual'
+  )
+
+plot_preds_mw
+```
+
+```{r}
+#| fig-height: 10
+#| fig-width: 12
+#| echo: false
+
+preds_ne <-
+  preds |> 
+  filter(region == "NE") |>
+  mutate(horizon = paste0("Horizon: ", horizon))
+
+plot_preds_ne <-
+  preds_ne |>
+  ggplot() +
+  geom_line(
+    aes(x = date, y = obs_detrended, color = 'Observed'),
+    linewidth = 0.5
+  ) +
+  geom_line(
+    aes(x = date, y = pred_detrended_eesn, color = "EESN Predictions"),
+    linewidth = 0.75
+  ) +
+  geom_line(
+    aes(x = date, y = pred_detrended_rf, color = "RF Predictions"),
+    linewidth = 0.75
+  ) +
+  geom_point(
+    data = preds_ne |> filter(extreme == "extreme"), 
+    aes(x = date, y = obs_detrended, color = "Observed extremes")
+  ) +
+  facet_wrap(. ~ horizon, nrow = 4) +
+  scale_y_continuous(breaks = scales::breaks_width(2.5)) +
+  scale_color_manual(
+    breaks = c(
+      "Observed",
+      "RF Predictions",
+      "EESN Predictions",
+      "Observed extremes"
+    ),
+    values = c(
+      "Observed" = "black",
+      "RF Predictions" = cols_models[4],
+      "EESN Predictions" = "dodgerblue",
+      "Observed extremes" = "red3"
+    )
+  ) +
+  theme_minimal() +
+  theme(        
+    axis.line.y = element_line(color = "black"),
+    axis.text = element_text(size = 12),
+    axis.ticks.y = element_line(color = "black"),
+    axis.ticks.length = unit(3, "pt"),
+    axis.title = element_text(size = 16),
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    legend.title = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.grid.major.x = element_line(color = "grey90", linewidth = 0.15),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.y = element_line(color = "grey90", linewidth = 0.15),
+    plot.title.position = "plot",
+    plot.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "plain"),
+    strip.text.x = element_text(size = 16),
+    title = element_text(size = 14)
+  ) +
+  labs(
+    title = "Region NE: Observed vs Predicted Time Series",
+    x = 'Week',
+    y = 'T2M residual'
+  )
+
+plot_preds_ne
+```
+
+```{r}
+#| fig-height: 10
+#| fig-width: 12
+#| echo: false
+
+preds_se <-
+  preds |> 
+  filter(region == "SE") |>
+  mutate(horizon = paste0("Horizon: ", horizon))
+
+plot_preds_se <-
+  preds_se |>
+  ggplot() +
+  geom_line(
+    aes(x = date, y = obs_detrended, color = 'Observed'),
+    linewidth = 0.5
+  ) +
+  geom_line(
+    aes(x = date, y = pred_detrended_eesn, color = "EESN Predictions"),
+    linewidth = 0.75
+  ) +
+  geom_line(
+    aes(x = date, y = pred_detrended_rf, color = "RF Predictions"),
+    linewidth = 0.75
+  ) +
+  geom_point(
+    data = preds_se |> filter(extreme == "extreme"), 
+    aes(x = date, y = obs_detrended, color = "Observed extremes")
+  ) +
+  facet_wrap(. ~ horizon, nrow = 4) +
+  scale_y_continuous(breaks = scales::breaks_width(2.5)) +
+  scale_color_manual(
+    breaks = c(
+      "Observed",
+      "RF Predictions",
+      "EESN Predictions",
+      "Observed extremes"
+    ),
+    values = c(
+      "Observed" = "black",
+      "RF Predictions" = cols_models[4],
+      "EESN Predictions" = "dodgerblue",
+      "Observed extremes" = "red3"
+    )
+  ) +
+  theme_minimal() +
+  theme(        
+    axis.line.y = element_line(color = "black"),
+    axis.text = element_text(size = 12),
+    axis.ticks.y = element_line(color = "black"),
+    axis.ticks.length = unit(3, "pt"),
+    axis.title = element_text(size = 16),
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    legend.title = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.grid.major.x = element_line(color = "grey90", linewidth = 0.15),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.y = element_line(color = "grey90", linewidth = 0.15),
+    plot.title.position = "plot",
+    plot.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "plain"),
+    strip.text.x = element_text(size = 16),
+    title = element_text(size = 14)
+  ) +
+  labs(
+    title = "Region SE: Observed vs Predicted Time Series",
+    x = 'Week',
+    y = 'T2M residual'
+  )
+
+plot_preds_se
+```
+
+```{r}
+#| fig-height: 10
+#| fig-width: 12
+#| echo: false
+
+preds_sw <-
+  preds |> 
+  filter(region == "SW") |>
+  mutate(horizon = paste0("Horizon: ", horizon))
+
+plot_preds_sw <-
+  preds_sw |>
+  ggplot() +
+  geom_line(
+    aes(x = date, y = obs_detrended, color = 'Observed'),
+    linewidth = 0.5
+  ) +
+  geom_line(
+    aes(x = date, y = pred_detrended_eesn, color = "EESN Predictions"),
+    linewidth = 0.75
+  ) +
+  geom_line(
+    aes(x = date, y = pred_detrended_rf, color = "RF Predictions"),
+    linewidth = 0.75
+  ) +
+  geom_point(
+    data = preds_sw |> filter(extreme == "extreme"), 
+    aes(x = date, y = obs_detrended, color = "Observed extremes")
+  ) +
+  facet_wrap(. ~ horizon, nrow = 4) +
+  scale_y_continuous(breaks = scales::breaks_width(2.5)) +
+  scale_color_manual(
+    breaks = c(
+      "Observed",
+      "RF Predictions",
+      "EESN Predictions",
+      "Observed extremes"
+    ),
+    values = c(
+      "Observed" = "black",
+      "RF Predictions" = cols_models[4],
+      "EESN Predictions" = "dodgerblue",
+      "Observed extremes" = "red3"
+    )
+  ) +
+  theme_minimal() +
+  theme(        
+    axis.line.y = element_line(color = "black"),
+    axis.text = element_text(size = 12),
+    axis.ticks.y = element_line(color = "black"),
+    axis.ticks.length = unit(3, "pt"),
+    axis.title = element_text(size = 16),
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    legend.title = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.grid.major.x = element_line(color = "grey90", linewidth = 0.15),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.y = element_line(color = "grey90", linewidth = 0.15),
+    plot.title.position = "plot",
+    plot.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "plain"),
+    strip.text.x = element_text(size = 16),
+    title = element_text(size = 14)
+  ) +
+  labs(
+    title = "Region SW: Observed vs Predicted Time Series",
+    x = 'Week',
+    y = 'T2M residual'
+  )
+
+plot_preds_sw
+```
+
+```{r}
+#| fig-height: 10
+#| fig-width: 12
+#| echo: false
+
+preds_w <-
+  preds |> 
+  filter(region == "W") |>
+  mutate(horizon = paste0("Horizon: ", horizon))
+
+plot_preds_w <-
+  preds_w |>
+  ggplot() +
+  geom_line(
+    aes(x = date, y = obs_detrended, color = 'Observed'),
+    linewidth = 0.5
+  ) +
+  geom_line(
+    aes(x = date, y = pred_detrended_eesn, color = "EESN Predictions"),
+    linewidth = 0.75
+  ) +
+  geom_line(
+    aes(x = date, y = pred_detrended_rf, color = "RF Predictions"),
+    linewidth = 0.75
+  ) +
+  geom_point(
+    data = preds_w |> filter(extreme == "extreme"), 
+    aes(x = date, y = obs_detrended, color = "Observed extremes")
+  ) +
+  facet_wrap(. ~ horizon, nrow = 4) +
+  scale_y_continuous(breaks = scales::breaks_width(2.5)) +
+  scale_color_manual(
+    breaks = c(
+      "Observed",
+      "RF Predictions",
+      "EESN Predictions",
+      "Observed extremes"
+    ),
+    values = c(
+      "Observed" = "black",
+      "RF Predictions" = cols_models[4],
+      "EESN Predictions" = "dodgerblue",
+      "Observed extremes" = "red3"
+    )
+  ) +
+  theme_minimal() +
+  theme(        
+    axis.line.y = element_line(color = "black"),
+    axis.text = element_text(size = 12),
+    axis.ticks.y = element_line(color = "black"),
+    axis.ticks.length = unit(3, "pt"),
+    axis.title = element_text(size = 16),
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    legend.title = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.grid.major.x = element_line(color = "grey90", linewidth = 0.15),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.y = element_line(color = "grey90", linewidth = 0.15),
+    plot.title.position = "plot",
+    plot.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "plain"),
+    strip.text.x = element_text(size = 16),
+    title = element_text(size = 14)
+  ) +
+  labs(
+    title = "Region W: Observed vs Predicted Time Series",
+    x = 'Week',
+    y = 'T2M residual'
+  )
+
+plot_preds_w
+```
+
+```{r}
+ggsave(
+  'figs/ObsVPred_TimeSeries_MW.png', 
+  plot_preds_mw,
+  width = 12, 
+  height = 10
+)
+
+ggsave(
+  'figs/ObsVPred_TimeSeries_NE.png', 
+  plot_preds_ne,
+  width = 12, 
+  height = 10
+)
+
+ggsave(
+  'figs/ObsVPred_TimeSeries_SE.png', 
+  plot_preds_se,
+  width = 12, 
+  height = 10
+)
+
+ggsave(
+  'figs/ObsVPred_TimeSeries_SW.png', 
+  plot_preds_sw,
+  width = 12, 
+  height = 10
+)
+
+ggsave(
+  'figs/ObsVPred_TimeSeries_W.png', 
+  plot_preds_w,
+  width = 12, 
+  height = 10
+)
+```
+
+## Observed vs Predicted
+
+Function to make a single panel: 
+
+```{r}
+make_panel <- function(
+    df, 
+    show_x = FALSE, 
+    show_y = FALSE, 
+    title = NULL,
+    xlab = NULL,
+    ylab = NULL,
+    right_lab = NULL
+  ) {
+  
+  ggplot(
+    data = df, 
+    mapping = aes(x = s_obs, y = s_preds)
+  ) +
+    geom_point(col = "#1f77b4", alpha = 0.85, size = 0.75) +
+    geom_abline(
+      slope = 1, 
+      intercept = 0, 
+      linetype = "dashed",
+      linewidth = 0.4
+    ) +
+    scale_x_continuous(
+      limits = c(df$panel_min[1], df$panel_max[1]),
+      expand = expansion(mult = 0),
+      breaks = scales::breaks_width(5)
+    ) +
+    scale_y_continuous(
+      limits = c(df$panel_min[1], df$panel_max[1]),
+      expand = expansion(mult = 0),
+      breaks = scales::breaks_width(5),
+      sec.axis = if (!is.null(right_lab)) dup_axis(name = right_lab) else waiver()
+    ) +
+    coord_equal() +
+    theme_minimal() +
+    labs(title = title, x = xlab, y = ylab) +
+    theme(
+      panel.grid.major.x = element_line(color = "grey90", linewidth = 0.15),
+      panel.grid.minor.x = element_blank(),
+      panel.grid.minor.y = element_blank(),
+      panel.grid.major.y = element_line(color = "grey90", linewidth = 0.15),
+      axis.ticks.y = if (show_y)
+        element_line(color = "black")
+      else
+        element_blank(),
+      axis.ticks.y.right = element_blank(),
+      axis.ticks.x = if (show_x)
+        element_line(color = "black")
+      else
+        element_blank(),
+      axis.ticks.length = unit(3, "pt"),
+      axis.text.x = if (show_x)
+        element_text(color = "black", size = 8)
+      else
+        element_blank(),
+      axis.text.y = if (show_y)
+        element_text(color = "black", size = 8)
+      else
+        element_blank(),
+      axis.text.y.right = element_blank(),
+      axis.title.x = if (!is.null(xlab))
+        element_text(color = "black", size = 12)
+      else
+        element_blank(),
+      axis.title.y.left = if (!is.null(ylab))
+        element_text(color = "black", size = 12)
+      else
+        element_blank(),
+      axis.title.y.right = if (!is.null(right_lab))
+        element_text(size = 12, angle = 90)
+      else
+        element_blank(),
+      plot.title = element_text(hjust = 0.5, size = 12),
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(fill = "white", color = NA),
+      panel.border = element_rect(
+        color = "black",
+        fill = NA,
+        linewidth = 1
+      ),
+      plot.margin = margin(
+        t = 4,
+        r = 0,
+        b = 4,
+        l = 0
+      )
+    )
+}
+```
+
+Prepare data for plots (RF):
+
+```{r}
+## Prepare qq data for plot
+qq_plot_data_rf <-
+  preds |>
+  summarise(
+    s_preds = list(sort(pred_detrended_rf)),
+    s_obs = list(sort(obs_detrended)),
+    .by = c(horizon, region)
+  ) |>
+  unnest(c(s_preds, s_obs)) |>
+  mutate(
+    horizon = factor(paste0("H=", horizon), levels = paste0("H=", 1:4))
+  )
+
+## Ranges for each panel
+panel_ranges_rf <- 
+  qq_plot_data_rf |>
+  group_by(region, horizon) |>
+  summarise(
+    panel_min = min(c(s_obs, s_preds), na.rm = TRUE),
+    panel_max = max(c(s_obs, s_preds), na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    span = panel_max - panel_min,
+    pad = if_else(span > 0, 0.04 * span, 0.04),
+    panel_min = panel_min - pad,
+    panel_max = panel_max + pad
+  )
+
+## Join ranges with data
+qq_plot_data_rf <- 
+  qq_plot_data_rf |>
+  left_join(panel_ranges_rf, by = c("region", "horizon"))
+```
+
+Create RF plot:
+
+```{r}
+#| fig-width: 10
+#| fig-height: 12
+#| message: false
+
+## Build Each Row by horizon and region
+regions <- unique(qq_plot_data_rf$region)
+horizons <- unique(qq_plot_data_rf$horizon)
+
+## Data rows
+row_plots <- list()
+for (r in seq_along(regions)) {
+  row_items <- list()
+
+  for (h in seq_along(horizons)) {
+    
+    df_panel <- 
+      qq_plot_data_rf |>
+      filter(region == regions[r], horizon == horizons[h])
+    
+    #print(paste0('Region: ', regions[r], ' ', horizons[h]))
+    row_items[[h]] <- make_panel(
+      df_panel,
+      show_x = TRUE,
+      show_y = TRUE,
+      title = if (regions[r] == 'MW') horizons[h] else NULL,
+      xlab = if (regions[r] == 'W') "Observed" else NULL,
+      ylab = if (horizons[h] == 'H=1') regions[r] else NULL,
+      right_lab = if (horizons[h] == 'H=4') "Predicted" else NULL
+      
+    )
+  }
+  
+  row_plots[[r]] <- wrap_plots(
+    row_items,
+    ncol = length(horizons),
+    widths = rep(1, length(horizons))
+  )
+  
+}
+
+## Combine all rows
+full_plot <- wrap_plots(
+  row_plots,
+  ncol = 1,
+  heights = rep(1, length(regions))
+)
+
+## Create plot
+QQ_RF <- (
+  full_plot &
+  theme(plot.background = element_rect(fill = "white", color = NA)))
+
+QQ_RF
+```
+
+Prepare data for plots (EESN):
+
+```{r}
+## Prepare qq data for plot
+qq_plot_data_eesn <-
+  preds |>
+  summarise(
+    s_preds = list(sort(pred_detrended_eesn)),
+    s_obs = list(sort(obs_detrended)),
+    .by = c(horizon, region)
+  ) |>
+  unnest(c(s_preds, s_obs)) |>
+  mutate(
+    horizon = factor(paste0("H=", horizon), levels = paste0("H=", 1:4))
+  )
+
+## Ranges for each panel
+panel_ranges_eesn <- 
+  qq_plot_data_eesn |>
+  group_by(region, horizon) |>
+  summarise(
+    panel_min = min(c(s_obs, s_preds), na.rm = TRUE),
+    panel_max = max(c(s_obs, s_preds), na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    span = panel_max - panel_min,
+    pad = if_else(span > 0, 0.04 * span, 0.04),
+    panel_min = panel_min - pad,
+    panel_max = panel_max + pad
+  )
+
+## Join ranges with data
+qq_plot_data_eesn <- 
+  qq_plot_data_eesn |>
+  left_join(panel_ranges_eesn, by = c("region", "horizon"))
+```
+
+Create EESN plot:
+
+```{r}
+#| fig-width: 10
+#| fig-height: 12
+#| message: false
+
+## Build Each Row by horizon and region
+regions <- unique(qq_plot_data_eesn$region)
+horizons <- unique(qq_plot_data_eesn$horizon)
+
+## Data rows
+row_plots <- list()
+for (r in seq_along(regions)) {
+  row_items <- list()
+
+  for (h in seq_along(horizons)) {
+    df_panel <- qq_plot_data_eesn |>
+      filter(region == regions[r], horizon == horizons[h])
+    
+    #print(paste0('Region: ', regions[r], ' ', horizons[h]))
+    row_items[[h]] <- make_panel(
+      df_panel,
+      show_x = TRUE,
+      show_y = TRUE,
+      title = if (regions[r] == 'MW') horizons[h] else NULL,
+      xlab = if (regions[r] == 'W') "Observed" else NULL,
+      ylab = if (horizons[h] == 'H=1') regions[r] else NULL,
+      right_lab = if (horizons[h] == 'H=4') "Predicted" else NULL
+      
+    )
+  }
+  
+  row_plots[[r]] <- wrap_plots(
+    row_items,
+    ncol = length(horizons),
+    widths = rep(1, length(horizons))
+  )
+  
+}
+
+## Combine all rows
+full_plot <- wrap_plots(
+  row_plots,
+  ncol = 1,
+  heights = rep(1, length(regions))
+)
+
+## Create plot
+QQ_EESN <- (
+  full_plot &
+  theme(plot.background = element_rect(fill = "white", color = NA)))
+
+QQ_EESN
+```
+
+Save plots:
+
+```{r}
+ggsave(
+  'figs/QQ_RF.png', 
+  QQ_RF,
+  width = 10, 
+  height = 12
+)
+
+ggsave(
+  'figs/QQ_EESN.png', 
+  QQ_EESN,
+  width = 10, 
+  height = 12
+)
+```
+

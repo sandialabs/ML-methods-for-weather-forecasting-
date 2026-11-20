@@ -1,0 +1,1398 @@
+---
+title: "Figures & Tables Comparing Model Performances"
+author: "Katherine Goode"
+format:
+  html:
+    embed-resources: true
+    toc: true
+---
+
+Load packages:
+
+```{r}
+#| message: false
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(lubridate)
+library(MetBrewer)
+library(stringr)
+library(tidyr)
+library(xtable)
+```
+
+File paths: 
+
+```{r}
+fp_cee = "~/../../Volumes/subseasonal_extreme/"
+fp_res_test = "weekly_ave_test/Results/weekly_model_results_2021-2024/"
+fp_rf = "RF/RF_Final_Code/outputs/"
+fp_res_test_eesn = 
+  "ML-methods-for-weather-forecasting-internal-dev/EESNs/results/"
+```
+
+# Initial Data Preprocessing
+
+Code for joining and saving joined EESNs predictions:
+
+```{r}
+# fps_res_test_eesn_preds <-
+#   list.files(
+#     path = paste0(
+#       fp_cee,
+#       fp_res_test_eesn,
+#       "final-preds-chosen-by-all-data"
+#     ),
+#     pattern = "\\.csv$",
+#     full.names = TRUE,
+#     recursive = TRUE
+#   )
+# 
+# preds_eesn <-
+#   purrr::map_dfr(
+#     .x = fps_res_test_eesn_preds,
+#     .f = function(x) read.csv(x) |> mutate(file = x)
+#   ) |>
+#   mutate(file = str_remove(string = file, paste0(
+#     "/Users/kjgoode/../../Volumes/subseasonal_extreme/",
+#     fp_res_test_eesn,
+#     "final-preds-chosen-by-all-data/"
+#   ))) |>
+#   mutate(file = str_remove(file, "/.*")) |>
+#   separate(file, into = c("region", "horizon")) |>
+#   mutate(
+#     region = str_remove(region, "targetregion"),
+#     horizon = as.numeric(str_remove(horizon, "tau"))
+#   ) |>
+#   select(region, horizon, everything())
+# 
+# write.csv(
+#   x = preds_eesn,
+#   file = paste0(
+#     fp_cee,
+#     fp_res_test_eesn,
+#     "final-preds-chosen-by-all-data.csv"
+#   ),
+#   row.names = FALSE
+# )
+```
+
+# Load/Compute Results (on test data 2021-2024)
+
+## Predictions
+
+Load predictions:
+
+```{r}
+preds_linear <-
+  read.csv(paste0(
+    fp_cee,
+    fp_res_test,
+    fp_rf,
+    "detrending/final/test_preds.csv"
+  )) |>
+  pivot_longer(
+    cols = W:NE,
+    names_to = "region",
+    values_to = "pred_linear"
+  ) |>
+  rename(date = Date) |>
+  separate(
+    date, 
+    into = c("year", "week"), 
+    sep = 4, 
+    remove = TRUE
+  ) |> 
+  mutate(
+    year = as.numeric(year),
+    week = as.numeric(week),
+    newyears = ymd(paste0(year,"-01-01")),
+    date = newyears + weeks(week)
+  ) |>
+  arrange(region, date) |>
+  select(
+    region, 
+    date,
+    year, 
+    week,
+    pred_linear
+  )
+
+preds_linear_detrended <-
+  read.csv(paste0(
+    fp_cee,
+    fp_res_test,
+    fp_rf,
+    "detrending/final/test_residuals.csv"
+  )) |>
+  pivot_longer(
+    cols = W:NE,
+    names_to = "region",
+    values_to = "pred_detrended_linear"
+  ) |>
+  rename(date = Date) |>
+  separate(
+    date, 
+    into = c("year", "week"), 
+    sep = 4, 
+    remove = TRUE
+  ) |> 
+  mutate(
+    year = as.numeric(year),
+    week = as.numeric(week),
+    newyears = ymd(paste0(year,"-01-01")),
+    date = newyears + weeks(week)
+  ) |>
+  arrange(region, date) |>
+  select(
+    region, 
+    date,
+    year, 
+    week,
+    pred_detrended_linear
+  )
+
+preds_rf <-
+  read.csv(paste0(
+    fp_cee,
+    fp_res_test,
+    fp_rf,
+    "predictions_2021_2024_RF/RF_preds_standard_2021_2024.csv"
+  )) |>
+  rename_all(.funs = tolower) |>
+  rename(
+    date = forecast_date,
+    obs = observed,
+    pred_rf = predicted,
+    pred_detrended_rf = pred_detrended
+  ) |>
+  separate(
+    date, 
+    into = c("year", "week"), 
+    sep = 4, 
+    remove = TRUE
+  ) |> 
+  mutate(
+    year = as.numeric(year),
+    week = as.numeric(week),
+    newyears = ymd(paste0(year,"-01-01")),
+    date = newyears + weeks(week),
+    extreme = ifelse(abs(z_score) >= 1, T, F)
+  ) |>
+  arrange(region, horizon, date) |>
+  select(
+    region, 
+    horizon,
+    date, 
+    year, 
+    week,
+    obs,
+    obs_detrended, 
+    pred_rf, 
+    pred_detrended_rf,
+    z_score,
+    extreme
+  )
+
+preds_eesn <-
+  read.csv(file = paste0(
+    fp_cee, 
+    fp_res_test_eesn,
+    "final-preds-chosen-by-all-data.csv"
+  )) |>
+  rename(pred_detrended_eesn = pred) |>
+  mutate(
+    newyears = ymd(paste0(year,"-01-01")),
+    date = newyears + weeks(week)
+  ) |>
+  filter(
+    data != "training",
+    year < 2025
+  ) |>
+  select(-data, -newyears) |>
+  select(region, horizon, date, year, week, pred_detrended_eesn) |>
+  arrange(region, horizon, date)
+```
+
+Join predictions: 
+
+```{r}
+preds <-
+  full_join(
+    preds_rf,
+    preds_eesn,
+    by = join_by(horizon, region, date, year, week)
+  ) |>
+  left_join(
+    preds_linear, 
+    by = join_by(region, date, year, week)
+  ) |>
+  left_join(
+    preds_linear_detrended, 
+    by = join_by(region, date, year, week)
+  ) |>
+  mutate(extreme = ifelse(extreme, "extreme", NA)) |>
+  select(
+    horizon,
+    region,
+    date,
+    year,
+    week,
+    z_score,
+    extreme,
+    obs,
+    obs_detrended,
+    pred_linear,
+    pred_rf,
+    pred_detrended_linear,
+    pred_detrended_rf,
+    pred_detrended_eesn,
+    everything()
+  )
+```
+
+## RMSEs
+
+Load RMSEs:
+
+```{r}
+rmses_persis <-
+  read.csv(paste0(
+    fp_cee, 
+    fp_res_test,
+    fp_rf,
+    "persistence/final/rmse_results_persistence_final.csv"
+  )) |>
+  rename_all(.funs = tolower) |>
+  rename(rmse_weighted = weighted_rmse_smooth) |>
+  select(-rmse_extreme, -weighted_rmse_step) |>
+  mutate(model = "persis")
+
+rmses_linear <-
+  read.csv(paste0(
+    fp_cee,
+    fp_res_test,
+    fp_rf,
+    "detrending/final/test_rmse_results.csv"
+  )) |>
+  rename_all(.funs = tolower) |>
+  rename(
+    region = x,
+    rmse = rmse_all,
+    rmse_weighted = weighted_rmse_smooth
+  ) |>
+  select(-rmse_extreme, -weighted_rmse_step) |>
+  mutate(model = "linear") |>
+  # Add horizons
+  right_join(
+    rmses_persis |> select(region, horizon),
+    by = join_by(region)
+  )
+
+rmses_rf <-
+  read.csv(paste0(
+    fp_cee, 
+    fp_res_test,
+    fp_rf,
+    "RMSE_results_2021_2024_RF/RF_rmse_results_standard_2021_2024.csv"
+  )) |>
+  rename_all(.funs = tolower) |>
+  rename(rmse_weighted = weighted_rmse_smooth) |>
+  select(
+    -rmse_extreme,
+    -weighted_rmse_step, 
+    -num_features,
+    -feature_names, 
+    -r_squared
+  ) |>
+  mutate(model = "rf")
+
+rmses_rf_weighted <-
+  read.csv(paste0(
+    fp_cee, 
+    fp_res_test,
+    fp_rf,
+    "RMSE_results_2021_2024_RF/RF_rmse_results_weighted_2021_2024.csv"
+  )) |>
+  rename_all(.funs = tolower) |>
+  rename(rmse_weighted = weighted_rmse_smooth) |>
+  select(
+    -rmse_extreme,
+    -weighted_rmse_step, 
+    -num_features,
+    -feature_names, 
+    -r_squared
+  ) |>
+  mutate(model = "rf weighted")
+
+rmses_eesn <-
+  read.csv(file = paste0(
+    fp_cee, 
+    fp_res_test_eesn,
+    "final-rmses-chosen-by-all-data.csv"
+  )) |> 
+  filter(data == "testing") |>
+  select(-X, -file, -(m:data), -rmse_extreme) |>
+  rename(
+    region = target_region,
+    horizon = tau
+  ) |> 
+  mutate(model = "eesn")
+
+rmses_eesn_weighted <-
+  read.csv(file = paste0(
+    fp_cee, 
+    fp_res_test_eesn,
+    "final-rmses-chosen-by-weighted.csv"
+  )) |> 
+  filter(data == "testing") |>
+  select(-X, -file, -(m:data), -rmse_extreme) |>
+  rename(
+    region = target_region,
+    horizon = tau
+  ) |> 
+  mutate(model = "eesn weighted")
+```
+
+Join RMSEs:
+
+```{r}
+rmses <-
+  bind_rows(
+    rmses_persis,
+    rmses_linear,
+    rmses_rf,
+    rmses_rf_weighted,
+    rmses_eesn,
+    rmses_eesn_weighted
+  ) |>
+    select(model, everything()) |>
+    arrange(model, region, horizon)
+```
+
+Compute RF and EESN RMSEs based on their predictions:
+
+```{r}
+rmses_models <-
+  preds |>
+  select(horizon, region, date, obs_detrended, pred_detrended_rf, pred_detrended_eesn) |>
+  pivot_longer(
+    cols = pred_detrended_rf:pred_detrended_eesn,
+    names_to = "model",
+    values_to = "pred"
+  ) |>
+  na.omit() |>
+  dplyr::summarise(
+    rmse = sqrt(sum((obs_detrended - pred)^2) / n()),
+    .by = c(horizon, region, model)
+  )
+```
+
+## R2
+
+Load R2s:
+
+```{r}
+r2_rf <-
+  read.csv(paste0(
+    fp_cee, 
+    fp_res_test,
+    fp_rf,
+    "RMSE_results_2021_2024_RF/RF_rmse_results_standard_2021_2024.csv"
+  )) |>
+  rename_all(.funs = tolower) |>
+  rename(r2 = r_squared) |>
+  select(region, horizon, r2) |> 
+  mutate(model = "rf")
+```
+
+R2 computation check:
+
+```{r}
+r2_rf_calc <-
+  preds |>
+  summarise(
+    r2_calc = 1 - (
+      sum((obs_detrended - pred_detrended_rf)^2) / 
+        sum((obs_detrended - mean(obs_detrended))^2)
+    ),
+    .by = c(horizon, region)
+  )
+
+full_join(r2_rf, r2_rf_calc, by = join_by(region, horizon)) |> 
+  summarise(agree_or_disagree = if_else(
+    sum(round(r2, 8) != round(r2_calc, 8)) == 0, 
+    "all agree!", 
+    "disagreements"
+  ))
+```
+
+Compute R2 for EESN:
+
+```{r}
+r2_eesn <-
+  preds |>
+  summarise(
+    r2 = 1 - (
+      sum((obs_detrended - pred_detrended_eesn)^2) / 
+        sum((obs_detrended - mean(obs_detrended))^2)
+    ),
+    .by = c(horizon, region)
+  ) |> 
+  mutate(model = "eesn")
+```
+
+Join R2s:
+
+```{r}
+r2 = bind_rows(r2_rf, r2_eesn)
+```
+
+## MSE Decomposition
+
+Load MSE decomposition:
+
+```{r}
+mse_decomp_rf <-
+    read.csv(paste0(
+    fp_cee, 
+    fp_res_test,
+    fp_rf,
+    "predictions_2021_2024_RF/MSE_DECOMP_RF.csv"
+  )) |> 
+  rename_all(.funs = tolower) |>
+  mutate(model = "rf")
+
+mse_decomp_eesn <-
+    read.csv(paste0(
+    fp_cee, 
+    fp_res_test,
+    fp_rf,
+    "predictions_2021_2024_RF/MSE_DECOMP_EESN.csv"
+  )) |>
+  rename_all(.funs = tolower) |>
+  mutate(model = "eesn")
+```
+
+Join MSE decomposition:
+
+```{r}
+mse_decomp <-
+  bind_rows(
+    mse_decomp_rf,
+    mse_decomp_eesn
+  )
+```
+
+## Bootstrap
+
+Load bootstrap results: 
+
+```{r}
+boot_rf <-
+    read.csv(paste0(
+    fp_cee,
+    fp_res_test,
+    fp_rf,
+    "predictions_2021_2024_RF/bootstrap_results_RF.csv"
+  )) |> 
+  rename_all(.funs = tolower) |>
+  select(-x) |>
+  mutate(model = "rf")
+
+boot_eesn <-
+  read.csv(paste0(
+    fp_cee,
+    fp_res_test,
+    fp_rf,
+    "predictions_2021_2024_RF/bootstrap_results_EESN.csv"
+  )) |>
+  rename_all(.funs = tolower) |>
+  select(-x) |>
+  mutate(model = "eesn")
+```
+
+Join bootstrap results:
+
+```{r}
+boot <-
+  bind_rows(
+    boot_rf,
+    boot_eesn
+  )
+```
+
+## All Metrics
+
+Join all metrics:
+
+```{r}
+all_metrics <-
+  full_join(rmses, r2, by = join_by(model, region, horizon)) |>
+  left_join(mse_decomp, by = join_by(model, region, horizon)) |>
+  left_join(boot, by = join_by(model, region, horizon))
+```
+
+## Bootstrap Results
+
+```{r}
+boot |>
+  filter(model == "rf") |>
+  select(-n, -model) |>
+  rename(
+    Region = region,
+    Horizon = horizon,
+    "\\shortstack{Mean MSE \\\\ Difference}" = mean_mse_diff,
+    "\\shortstack{Confidence Interval \\\\ (Lower)}" = ci_lower,
+    "\\shortstack{Confidence Interval \\\\ (Upper)}" = ci_upper,
+    "\\shortstack{RF \\\\ Better}?" = rf_better,
+    "\\shortstack{Climatology \\\\ Better?}" = climatology_better
+  ) |>
+  xtable(
+    caption = "Bootstrap results for RF on test period (95\\% confidence levels)."
+  ) |>
+  print(
+    booktabs = TRUE,   
+    include.rownames = FALSE,
+    sanitize.colnames.function = identity,
+    caption.placement = "top",
+    size = "\\scriptsize"
+  )
+```
+
+```{r}
+boot |>
+  filter(model == "eesn") |>
+  select(-n, -model) |>
+  rename(
+    Region = region,
+    Horizon = horizon,
+    "\\shortstack{Mean MSE \\\\ Difference}" = mean_mse_diff,
+    "\\shortstack{Confidence Interval \\\\ (Lower)}" = ci_lower,
+    "\\shortstack{Confidence Interval \\\\ (Upper)}" = ci_upper,
+    "\\shortstack{EESN \\\\ Better}?" = rf_better,
+    "\\shortstack{Climatology \\\\ Better?}" = climatology_better
+  ) |>
+  xtable(
+    caption = "Bootstrap results for EESN on test period (95\\% confidence levels)."
+  ) |>
+  print(
+    booktabs = TRUE,   
+    include.rownames = FALSE,
+    sanitize.colnames.function = identity,
+    caption.placement = "top",
+    size = "\\scriptsize"
+  )
+```
+
+# Figures
+
+## RMSEs (without persistence)
+
+```{r}
+#| fig-height: 8
+#| fig-width: 12
+#| echo: false
+#| warning: false
+
+plot_rmses <-
+  all_metrics |>
+  filter(model != "persis", model != "eesn weighted", model != "rf weighted") |>
+  select(model, region, horizon, rmse, rmse_weighted) |>
+  pivot_longer(cols = c(rmse, rmse_weighted), names_to = "metric") |>
+  mutate(
+    model = fct_recode(
+      model, 
+      "Linear Model" = "linear",
+      "Random Forest" = "rf",
+      "EESN" = "eesn"
+      ),
+    metric = fct_recode(
+      metric,
+      "RMSE" = "rmse",
+      "Weighted RMSE" = "rmse_weighted"
+    )
+  ) |>
+  mutate(
+    model = fct_relevel(model, "Linear Model", "EESN", "Random Forest"),
+    metric = fct_relevel(metric, "RMSE", "Weighted RMSE")
+  ) |>
+  ggplot(aes(x = horizon, y = value, group = model, color = model)) + 
+  geom_line(linewidth = 0.6) + 
+  geom_point(size = 2.25) +
+  facet_grid(metric ~ region, scales = "free_y", switch = "y") +
+  scale_color_manual(
+    values = c(
+      "black", 
+      met.brewer(name = "Egypt", n = 4, type = "discrete")[c(2,4)]
+    )
+  ) +
+  theme_minimal(base_size = 18) + 
+  theme(
+    legend.position = "bottom",
+    strip.placement = "outside",
+    strip.text = element_text(size = 18),
+    legend.text = element_text(size = 16)
+  ) + 
+  labs(x = "Horizon", y = NULL, color = NULL)
+
+plot_rmses
+```
+
+```{r}
+ggsave(
+  'figs/RMSEs.png', 
+  plot_rmses, 
+  width = 12, 
+  height = 8
+)
+```
+
+RMSEs including the models tuned using wRMSE:
+
+```{r}
+#| fig-height: 8
+#| fig-width: 12
+#| echo: false
+#| warning: false
+
+plot_rmses_with_weighted <-
+  all_metrics |>
+  filter(model != "persis") |>
+  select(model, region, horizon, rmse, rmse_weighted) |>
+  pivot_longer(cols = c(rmse, rmse_weighted), names_to = "metric") |>
+  mutate(
+    model = fct_recode(
+      model, 
+      "Linear Model" = "linear",
+      "Random Forest" = "rf",
+      "EESN" = "eesn"
+      ),
+    metric = fct_recode(
+      metric,
+      "RMSE" = "rmse",
+      "Weighted RMSE" = "rmse_weighted"
+    )
+  ) |>
+  mutate(
+    model = fct_relevel(model, "Linear Model", "EESN", "Random Forest"),
+    metric = fct_relevel(metric, "RMSE", "Weighted RMSE")
+  ) |>
+  ggplot(aes(x = horizon, y = value, group = model, color = model)) + 
+  geom_line(linewidth = 0.6) + 
+  geom_point(size = 2.25) +
+  facet_wrap(metric ~ region, scales = "free_y", strip.position = "top", ncol = 5) +
+  scale_color_manual(
+    values = c(
+      "black", 
+      met.brewer(name = "Egypt", n = 4, type = "discrete")[c(2,4,1,3)]
+    )
+  ) +
+  theme_minimal(base_size = 18) + 
+  theme(
+    legend.position = "bottom",
+    strip.placement = "outside",
+    strip.text = element_text(size = 18),
+    legend.text = element_text(size = 16)
+  ) + 
+  labs(x = "Horizon", y = NULL, color = NULL)
+
+plot_rmses_with_weighted
+```
+
+## RMSEs (with persistence)
+
+```{r}
+#| fig-height: 10
+#| fig-width: 12
+#| echo: false
+#| warning: false
+
+plot_rmses_w_persis <-
+  all_metrics |>
+  filter(model != "eesn weighted", model != "rf weighted") |>
+  select(model, region, horizon, rmse, rmse_weighted) |>
+  pivot_longer(cols = c(rmse, rmse_weighted), names_to = "metric") |>
+  mutate(
+    model = fct_recode(
+      model, 
+      "Linear Model" = "linear",
+      "Random Forest" = "rf",
+      "EESN" = "eesn",
+      "Persistence" = "persis"
+      ),
+    metric = fct_recode(
+      metric,
+      "RMSE" = "rmse",
+      "Weighted RMSE" = "rmse_weighted"
+    )
+  ) |>
+  mutate(
+    model = fct_relevel(
+      model, 
+      "Linear Model", 
+      "Persistence", 
+      "EESN", 
+      "Random Forest"
+    ),
+    metric = fct_relevel(metric, "RMSE", "Weighted RMSE")
+  ) |>
+  ggplot(aes(x = horizon, y = value, group = model, color = model)) + 
+  geom_line(linewidth = 0.5) + 
+  geom_point(size = 1.5) +
+  facet_grid(metric ~ region, scales = "free_y", switch = "y") +
+  scale_color_manual(
+    values = c(
+      "black", 
+      met.brewer(name = "Egypt", n=4, type="discrete")[c(1,2,4)])
+  ) +
+  theme_minimal(base_size = 18) + 
+  theme(
+    legend.position = "bottom",
+    strip.placement = "outside",
+    strip.text = element_text(size = 18)
+  ) + 
+  labs(x = "Horizon", y = NULL, color = NULL)
+
+plot_rmses_w_persis
+```
+
+```{r}
+ggsave(
+  "figs/RMSEs_with_persistence.png",
+  plot_rmses_w_persis,
+  width = 12, 
+  height = 10
+)
+```
+
+
+## R2 and Mean MSE Difference with Confidence Intervals
+
+```{r}
+#| fig-height: 8
+#| fig-width: 12
+#| echo: false
+#| warning: false
+
+plot_r2 <-
+  all_metrics |>
+  filter(model == "eesn" | model == "rf") |>
+  select(model, region, horizon, r2) |>
+  mutate(model = fct_recode(model, "Random Forest" = "rf", "EESN" = "eesn")) |>
+  ggplot(aes(x = horizon, y = r2, color = model)) + 
+  geom_line(linewidth = 0.75) + 
+  geom_point(size = 2.25) +
+  facet_grid(. ~ region) + 
+  scale_color_manual(
+    values = met.brewer(name = "Egypt", n = 4, type = "discrete")[c(2,4)]
+  ) +
+  theme_minimal(base_size = 18) + 
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    strip.text = element_text(size = 18),
+    axis = element_blank()
+  ) +
+  labs(x = "Horizon", y = "R2", color = NULL)
+
+plot_mse_diff <-
+  all_metrics |>
+  filter(model == "eesn" | model == "rf") |>
+  select(model, region, horizon, mean_mse_diff, ci_lower, ci_upper) |>
+  mutate(model = fct_recode(model, "Random Forest" = "rf", "EESN" = "eesn")) |>
+  ggplot(aes(x = horizon, y = mean_mse_diff, color = model)) + 
+  geom_point(size = 2.25, position = position_dodge(width = 0.5)) + 
+  geom_errorbar(
+    mapping = aes(ymin = ci_lower, ymax = ci_upper), 
+    width = 0.25, 
+    linewidth = 0.75,
+    position = position_dodge(width = 0.5)
+  ) +
+  geom_hline(yintercept = 0) +
+  facet_grid(. ~ region) + 
+  scale_color_manual(
+    values = met.brewer(name = "Egypt", n = 4, type = "discrete")[c(2,4)]
+  ) +
+  theme_minimal(base_size = 18) + 
+  theme(
+    legend.position = "bottom",
+    strip.text.x = element_blank(),
+    strip.text = element_text(size = 18), 
+    legend.text = element_text(size = 16)
+  ) +
+  labs(x = "Horizon", y = "Mean MSE Difference", color = NULL)
+
+plot_r2_and_mse_diff <-
+  cowplot::plot_grid(
+    plot_r2, plot_mse_diff, ncol = 1, rel_heights = c(0.43, 0.57)
+  )
+
+plot_r2_and_mse_diff
+```
+
+```{r}
+ggsave(
+  'figs/R2_and_MeanMSEdiff.png', 
+  plot_r2_and_mse_diff, 
+  width = 12, 
+  height = 8
+)
+```
+
+## MSE Decomposition
+
+```{r}
+#| fig-height: 8
+#| fig-width: 12
+#| echo: false
+#| warning: false
+plot_mse_decomp <-
+  all_metrics |>
+  filter(model == "eesn" | model == "rf") |>
+  select(
+    model, 
+    region,
+    horizon, 
+    correlation_component, 
+    conditional_bias, 
+    unconditional_bias
+  ) |>
+  pivot_longer(
+    cols = correlation_component:unconditional_bias, 
+    names_to = "metric"
+  ) |>
+  mutate(
+    model = fct_recode(model, "Random Forest" = "rf", "EESN" = "eesn"),
+    metric = fct_recode(
+      metric, 
+      "Unconditional Bias" = "unconditional_bias", 
+      "Conditional Bias" = "conditional_bias", 
+      "Imperfect Correlation" = "correlation_component"
+    ),
+    metric = fct_relevel(
+      metric,
+      "Unconditional Bias",
+      "Conditional Bias",
+      "Correlation Component"
+    )
+  ) |>
+  ggplot(aes(x = horizon, y = value, fill = metric)) +
+  geom_col() +
+  facet_grid(model ~ region) + 
+  scale_fill_manual(
+    values = met.brewer(name = "Johnson", n = 6, type = "continuous")[c(6,4,5)]
+  ) +
+  theme_minimal(base_size = 18) + 
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(size = 18), 
+    legend.text = element_text(size = 16)
+  ) +
+  labs(x = "Horizon", y = "MSE", fill = NULL)
+
+plot_mse_decomp
+```
+
+```{r}
+ggsave(
+  'figs/MSEdecomp.png', 
+  plot_mse_decomp,
+  width = 12, 
+  height = 8
+)
+```
+
+## Zscore Bin Plot (RF)
+
+Create binned data:
+
+```{r}
+## Function to create seasons
+seasons <- function(w){
+  s <- rep('Winter', length(w))
+  s[w < 49] <- 'Fall'
+  s[w < 36] <- 'Summer'
+  s[w < 23] <- 'Spring'
+  s[w < 10] <- 'Winter'
+  return(s)
+}
+
+## Function to bin data
+bins <- function(x){
+  b <- rep(8, length(x))
+  b[x < 1.5] <- 7
+  b[x < 1.0] <- 6
+  b[x < 0.5] <- 5
+  b[x < 0.0] <- 4
+  b[x < -0.5] <- 3
+  b[x < -1.0] <- 2
+  b[x < -1.5] <- 1
+  return(b)
+}
+
+## Bin Z_scores
+binned_test_pred_obs <- 
+  preds |> 
+  mutate(season = seasons(week)) |> 
+  mutate(bin = bins(z_score)) 
+
+## Summarize by bin and season
+bin_rmses <- 
+  binned_test_pred_obs |> 
+  mutate(
+    resid_rf = pred_detrended_rf - obs_detrended,
+    resid_eesn = pred_detrended_eesn - obs_detrended,
+    error_rf = resid_rf^2,
+    error_eesn = resid_eesn^2
+  ) |> 
+  summarize(
+    rmse_rf = sqrt(mean(error_rf)),
+    rmse_eesn = sqrt(mean(error_eesn)),
+    .by = c(horizon, region, season, bin)
+  )
+```
+
+Prepare options for plots:
+
+```{r}
+make_fullsize <- function() structure("", class = "fullsizebar")
+color_min = floor(min(c(bin_rmses$rmse_eesn, bin_rmses$rmse_rf)))
+color_max = ceiling(max(c(bin_rmses$rmse_eesn, bin_rmses$rmse_rf)))
+```
+
+```{r}
+#| echo: false
+plot_bins_rf <- 
+  bin_rmses |> 
+  filter(bin != 8) |> 
+  mutate(
+    season = factor(season, levels=c("Winter", "Spring", "Summer", "Fall"))
+  ) |> 
+  ggplot(aes(x = horizon, y = bin, fill = rmse_rf)) +
+  geom_tile() + 
+  scale_fill_gradientn(
+    colors = pals::parula(256), 
+    limits = c(color_min, color_max)
+  ) +
+  facet_grid(
+    season ~ region,
+    scales = 'free',
+    axes = 'all',
+    labeller = label_wrap_gen(multi_line = FALSE)
+  ) +
+  scale_y_continuous(
+    breaks = seq(1.5, by = 1, length.out = 7),
+    labels = seq(-1.5, 1.5, by=0.5),
+    expand = c(0, 0)
+  ) +
+  labs(y = 'Z-score', x = "Horizon", fill = "RMSE") +
+  #make_fullsize() +
+  theme_minimal(base_size = 16) +
+  theme(        
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.ticks.y = element_line(color = "black"),
+    axis.ticks.x = element_line(color = "black"),
+  ) 
+```
+
+```{r}
+#| echo: false
+plot_bins_eesn <- 
+  bin_rmses |> 
+  filter(bin != 8) |> 
+  mutate(
+    season = factor(season, levels=c("Winter", "Spring", "Summer", "Fall"))
+  ) |> 
+  ggplot(aes(x = horizon, y = bin, fill = rmse_eesn)) +
+  geom_tile() + 
+  scale_fill_gradientn(
+    colors = pals::parula(256),
+    limits = c(color_min, color_max)
+  ) +
+  facet_grid(
+    season ~ region,
+    scales = 'free',
+    axes = 'all',
+    labeller = label_wrap_gen(multi_line = FALSE)
+  ) +
+  scale_y_continuous(
+    breaks = seq(1.5, by = 1, length.out = 7),
+    labels = seq(-1.5, 1.5, by = 0.5),
+    expand = c(0, 0)
+  ) +
+  labs(y = 'Z-score', x = "Horizon", fill = NULL) +
+  #make_fullsize() +
+  theme_minimal(base_size = 16) +
+  theme(        
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.ticks.y = element_line(color = "black"),
+    axis.ticks.x = element_line(color = "black"),
+  ) 
+```
+
+```{r}
+#| fig-height: 8
+#| fig-width: 12
+#| echo: false
+plot_bins_rf
+plot_bins_eesn
+```
+
+
+```{r}
+ggsave(
+  'figs/ZbinPlotRF.png', 
+  plot_bins_rf,
+  width = 12, 
+  height = 8
+)
+
+ggsave(
+  'figs/ZbinPlotEESN.png', 
+  plot_bins_eesn,
+  width = 12, 
+  height = 8
+)
+```
+
+
+## Other (not in paper)
+
+```{r}
+#| fig-height: 16
+#| fig-width: 12
+#| echo: false
+#| warning: false
+all_metrics |>
+  filter(model != "eesn weighted", model != "rf weighted") |>
+  select(
+    model,
+    region, 
+    horizon, 
+    rmse, 
+    rmse_weighted, 
+    r2,
+    mse, 
+    correlation_component, 
+    conditional_bias, 
+    unconditional_bias, 
+    rho, 
+    mean_mse_diff
+  ) |>
+  pivot_longer(cols = rmse:mean_mse_diff, names_to = "metric") |>
+  mutate(
+    model = fct_recode(
+      model, 
+      "Linear Model" = "linear",
+      "Random Forest" = "rf",
+      "EESN" = "eesn",
+      "Persistence" = "persis"
+      )
+  ) |>
+  mutate(
+    model = fct_relevel(model, "Linear Model", "Persistence", "EESN", "Random Forest")
+  ) |>
+  ggplot(aes(x = horizon, y = value, group = model, color = model)) + 
+  geom_line(linewidth = 0.6) + 
+  geom_point(size = 2.25) +
+  facet_grid(metric ~ region, scales = "free_y", switch = "y") +
+  scale_color_manual(
+    values = c(
+      "black", 
+      met.brewer(name = "Egypt", n=4, type="discrete")[c(1,2,4)])
+  ) +
+  theme_minimal(base_size = 18) + 
+  theme(
+    legend.position = "bottom",
+    strip.placement = "outside"
+  ) + 
+  labs(x = "Horizon", y = NULL, color = NULL)
+```
+
+```{r}
+#| fig-height: 16
+#| fig-width: 12
+#| echo: false
+#| warning: false
+all_metrics |>
+  filter(model != "persis", model != "eesn weighted", model != "rf weighted") |>
+  select(
+    model,
+    region, 
+    horizon, 
+    rmse, 
+    rmse_weighted, 
+    r2,
+    mse, 
+    correlation_component, 
+    conditional_bias, 
+    unconditional_bias, 
+    rho, 
+    mean_mse_diff
+  ) |>
+  pivot_longer(cols = rmse:mean_mse_diff, names_to = "metric") |>
+  mutate(
+    model = fct_recode(
+      model, 
+      "Linear Model" = "linear",
+      "Random Forest" = "rf",
+      "EESN" = "eesn"
+      )
+  ) |>
+  mutate(
+    model = fct_relevel(model, "Linear Model", "EESN", "Random Forest")
+  ) |>
+  ggplot(aes(x = horizon, y = value, group = model, color = model)) + 
+  geom_line(linewidth = 0.6) + 
+  geom_point(size = 2.25) +
+  facet_grid(metric ~ region, scales = "free_y", switch = "y") +
+  scale_color_manual(
+    values = c(
+      "black", 
+      met.brewer(name = "Egypt", n = 4, type = "discrete")[c(2,4)])
+  ) +
+  theme_minimal(base_size = 18) + 
+  theme(
+    legend.position = "bottom",
+    strip.placement = "outside"
+  ) + 
+  labs(x = "Horizon", y = NULL, color = NULL)
+```
+
+```{r}
+#| fig-height: 6
+#| fig-width: 12
+#| echo: false
+#| warning: false
+all_metrics |>
+  filter(model == "eesn" | model == "rf") |>
+  select(
+    model, 
+    region,
+    horizon, 
+    correlation_component, 
+    conditional_bias, 
+    unconditional_bias
+  ) |>
+  pivot_longer(
+    cols = correlation_component:unconditional_bias, 
+    names_to = "metric"
+  ) |>
+  mutate(
+    model = fct_recode(model, "Random Forest" = "rf", "EESN" = "eesn"),
+    metric = fct_recode(
+      metric, 
+      "Unconditional Bias" = "unconditional_bias", 
+      "Conditional Bias" = "conditional_bias", 
+      "Correlation Component" = "correlation_component"
+    ),
+    metric = fct_relevel(
+      metric,
+      "Unconditional Bias",
+      "Conditional Bias",
+      "Correlation Component"
+    )
+  ) |>
+  ggplot(aes(x = horizon, y = value, fill = metric)) +
+  geom_col(position = "fill") +
+  facet_grid(model ~ region) + 
+  scale_fill_manual(
+    values = met.brewer(name = "Johnson", n = 6, type = "continuous")[c(6,4,5)]
+  ) +
+  theme_minimal(base_size = 14) + 
+  labs(x = "Horizon", y = "", fill = NULL)
+```
+
+# Tables
+
+## Linear Model Performance
+
+```{r}
+rmses_linear |> 
+  filter(horizon == 1) |> 
+  select(-model, -horizon) |> 
+  arrange(region) |> 
+  mutate(
+    rmse = round(rmse, 2),
+    rmse_weighted = round(rmse_weighted, 2)
+  )
+```
+
+## RMSEs
+
+```{r}
+all_metrics |>
+  filter(model == "rf") |>
+  select(region, horizon, rmse, rmse_weighted, r2) |>
+  rename(
+    Region = region,
+    Horizon = horizon,
+    RMSE = rmse,
+    "RMSE weighted" = rmse_weighted,
+    "$R^2$" = r2
+  ) |>
+  xtable(
+    align = rep("c",6),
+    caption = "RMSE, wRMSEm and $R^2$ values for RF forecasts (models were tuned using RMSE)."
+  ) |>
+  print(
+    booktabs = TRUE,   
+    include.rownames = FALSE,
+    sanitize.colnames.function = identity,
+    caption.placement = "top",
+    size = "\\small"
+  )
+```
+
+```{r}
+all_metrics |>
+  filter(model == "eesn") |>
+  select(region, horizon, rmse, rmse_weighted, r2) |>
+  rename(
+    Region = region,
+    Horizon = horizon,
+    RMSE = rmse,
+    "RMSE weighted" = rmse_weighted,
+    "$R^2$" = r2
+  ) |>
+  xtable(
+    align = rep("c",6),
+    caption =
+      "RMSE, wRMSEm and $R^2$ values for EESN forecasts (models were tuned using RMSE)."
+  ) |>
+  print(
+    booktabs = TRUE,   
+    include.rownames = FALSE,
+    sanitize.colnames.function = identity,
+    caption.placement = "top",
+    size = "\\small"
+  )
+```
+
+## MSE Decomposition 
+
+```{r}
+mse_decomp |> 
+  filter(model == "rf") |>
+  select(-model, -sum_components) |>
+  rename(
+    Region = region,
+    Horizon = horizon,
+    MSE = mse,
+    "\\shortstack{Correlation \\\\ Component}" = correlation_component,
+    "\\shortstack{Conditional \\\\ Bias}" = conditional_bias,
+    "\\shortstack{Unconditional \\\\ Bias}" = unconditional_bias,
+    "$\\rho$" = rho,
+    "Forecast SD" = forecast_sd,
+    "Observed SD" = observed_sd
+  ) |>
+  xtable(
+    align = rep("c",10),
+    caption = 
+      "MSE decomposition results for RF forecasts on the test period 2021-2024."
+  ) |> 
+  print(
+    booktabs = TRUE,   
+    include.rownames = FALSE,
+    sanitize.colnames.function = identity,
+    caption.placement = "top",
+    size = "\\scriptsize"
+  )
+```
+
+```{r}
+mse_decomp |> 
+  filter(model == "eesn") |>
+  select(-model, -sum_components) |>
+  rename(
+    Region = region,
+    Horizon = horizon,
+    MSE = mse,
+    "\\shortstack{Correlation \\\\ Component}" = correlation_component,
+    "\\shortstack{Conditional \\\\ Bias}" = conditional_bias,
+    "\\shortstack{Unconditional \\\\ Bias}" = unconditional_bias,
+    "$\\rho$" = rho,
+    "Forecast SD" = forecast_sd,
+    "Observed SD" = observed_sd
+  ) |>
+  xtable(
+    align = rep("c",10),
+    caption = 
+      "MSE decomposition results for EESN forecasts on the test period 2021-2024."
+  ) |> 
+  print(
+    booktabs = TRUE,   
+    include.rownames = FALSE,
+    sanitize.colnames.function = identity,
+    caption.placement = "top",
+    size = "\\scriptsize"
+  )
+```
+
+## Bootstrap
+
+```{r}
+boot |> 
+  filter(model == "rf") |>
+  select(-model, -n) |>
+  rename(
+    Region = region,
+    Horizon = horizon,
+    "\\shortstack{Mean MSE \\\\ Difference}" = mean_mse_diff,
+    "\\shortstack{Confidence Interval \\\\ (Lower Bound)}" = ci_lower,
+    "\\shortstack{Confidence Interval \\\\ (Upper Bound)}" = ci_upper,
+    "\\shortstack{RF \\\\ Better?}" = rf_better,
+    "\\shortstack{Climatology \\\\ Better?}" = climatology_better
+  ) |>
+  xtable(
+    align = c("l",rep("c",7)),
+    caption = 
+      "Bootstrap results for RF on test period (95\\% confidence levels)."
+  ) |>
+  print(
+    booktabs = TRUE,   
+    include.rownames = FALSE,
+    sanitize.colnames.function = identity,
+    caption.placement = "top",
+    size = "\\small"
+  )
+```
+
+```{r}
+boot |> 
+  filter(model == "eesn") |>
+  select(-model, -n) |>
+  rename(
+    Region = region,
+    Horizon = horizon,
+    "\\shortstack{Mean MSE \\\\ Difference}" = mean_mse_diff,
+    "\\shortstack{Confidence Interval \\\\ (Lower Bound)}" = ci_lower,
+    "\\shortstack{Confidence Interval \\\\ (Upper Bound)}" = ci_upper,
+    "\\shortstack{EESN \\\\ Better?}" = rf_better,
+    "\\shortstack{Climatology \\\\ Better?}" = climatology_better
+  ) |>
+  xtable(
+    align = c("l",rep("c",7)),
+    caption = 
+      "Bootstrap results for EESN on test period (95\\% confidence levels)."
+  ) |>
+  print(
+    booktabs = TRUE,   
+    include.rownames = FALSE,
+    sanitize.colnames.function = identity,
+    caption.placement = "top",
+    size = "\\small"
+  )
+```
